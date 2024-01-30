@@ -1,0 +1,27 @@
+# useful when mounting into docker
+.cabal
+.ghc
+.stackage
+.bash_history
+
+# Haskell gitignore template
+dist-*
+cabal-dev
+*.hi
+*.chi
+*.chs.h
+*.dyn_o
+*.dyn_hi
+.hpc
+*.prof
+*.aux
+*.hp
+*.eventlog
+.stack-work/
+cabal.project.local
+.HTF/
+.ghc.environment.*
+/yesod-devel/rebuild
+result
+rebuild
+stack.yaml.lock
