@@ -25,3 +25,4 @@ cabal.project.local
 result
 rebuild
 stack.yaml.lock
+cattleServer.cabal

@@ -3,9 +3,9 @@ version:        0.10.0
 
 dependencies:
   - base
-  - conduit
   - process
-  - yesod-core
+  - simplessh
+  - text
 
 # The library contains all of our application code. The executable
 # defined below is just a thin wrapper.
@@ -28,7 +28,7 @@ library:
 # Runnable executable for our application
 executables:
   cattleServer:
-    main: main.hs
+    main: Main.hs
     source-dirs: app
     ghc-options:
     - -threaded
