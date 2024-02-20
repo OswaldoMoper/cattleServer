@@ -26,3 +26,4 @@ result
 rebuild
 stack.yaml.lock
 cattleServer.cabal
+/app/Main
