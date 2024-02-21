@@ -28,24 +28,27 @@ main = do
   loginResponse <- runSimpleSSH loginToServer
   case loginResponse of
     Left err      -> do
-      writeLog $ ": Error\n" <> "Description: Fail to " <> show err <> "\n\n"
+      writeLog $ ": Error\nDescription: Fail to " <> show err
     Right session -> do
-      putStrLn "SSH connection started"
+      writeLog ": Success\nDescription: SSH connection started"
       commandResponse <- runSimpleSSH $ databaseBackupInServer session
       case commandResponse of
         Left err     -> do
-          hPutStrLn stderr $ "Error: " ++ show err
+          writeLog $ ": Error\nDescription: " <> show err
         Right result -> do
-          printResponse result "yesod-project.sql created successfully"
+          case resultExit result of
+            ExitFailure 1 -> writeLog $ ": Error\nDescription: " <> show (resultErr result)
+            _             -> writeLog $ ": Success\nDescription: " <> show (resultExit result) <> "-> yesod-project.sql created successfully" -- resultExit must not print an error
           closeResponse <- runSimpleSSH $ closeSession session
           case closeResponse of
             Left err -> do
-              hPutStrLn stderr $ "Error: " ++ show err
-              exitFailure
+              writeLog $ ": Error\nDescription: " <> show err
             Right () -> do
-              putStrLn "SSH connection closed"
+              writeLog ": Success\nDescription: SSH connection closed"
               callCommand $ "scp -r admin@" <> host <> ":" <> path <> sqlBackup <> " " <> localPath
+              writeLog ": Success\nDescription: yesod-project.sql downloaded successfully"
               callCommand $ "scp -r admin@" <> host <> ":" <> "/upload " <> localPath <> "/upload"
+              writeLog ": Success\nDescription: /upload downloaded successfully"
 
 loginToServer :: SimpleSSH Session
 loginToServer = do
@@ -58,16 +61,9 @@ databaseBackupInServer session = do
   response <- execCommand session $ "pg_dump -U postgres yesod-project > " <> path <> sqlBackup
   return response
 
-printResponse :: Result -> String -> IO ()
-printResponse res success = do
-  case resultExit res of
-    ExitFailure 1 -> putStrLn $ show (resultErr res)
-    _               -> do
-      putStrLn $ show (resultExit res) <> ": " <> success -- resultExit must not print an error
-
 writeLog :: String -> IO ()
 writeLog message = do
   logs <- openFile (localPath <> logFile) AppendMode
   utcTime <- getCurrentTime
-  hPutStr logs (iso8601Show utcTime <> message)
+  hPutStr logs (iso8601Show utcTime <> message <> "\n\n")
   hClose logs

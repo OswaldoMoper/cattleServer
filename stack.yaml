@@ -66,7 +66,6 @@ packages:
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
 extra-deps:
-  - text-time-0.3.1@sha256:c4301ea47bcb72deb60b0be25cf6f6b693a34a862ea9a8e9bc8b9a750e0857e9,1757
   - git: https://github.com/jessedMoore1994/simplessh
     commit: d4dbaa42daac10810d4c4c3ffb1c192d2b2d0872
   - cabal-pkg-config-version-hook-0.1.0.0@sha256:98b1313ee7ae65fca37a011c65d9f912774e32b03fc1e6ececb50072cfea86a8,961
