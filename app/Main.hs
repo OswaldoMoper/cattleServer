@@ -1,10 +1,13 @@
 module Main where
 
--- import           Data.Text
-import           Data.Time.Clock              (getCurrentTime)
-import           Data.Time.Format.ISO8601     (iso8601Show)
-import           Network.SSH.Client.SimpleSSH
-import           System.Exit                  hiding (ExitFailure)
+import           Control.Concurrent           (threadDelay)
+import           Data.List.Extra              (breakOn, dropEnd, replace)
+import           Data.Time.Clock
+import           Data.Time.Format.ISO8601     (iso8601ParseM, iso8601Show)
+import           Network.SSH.Client.SimpleSSH as SSH
+import           System.Directory             (doesDirectoryExist,
+                                               doesFileExist)
+import           System.Exit                  as E
 import           System.IO
 import           System.Process
 
@@ -23,32 +26,108 @@ host = "0.0.0.0"
 logFile :: String
 logFile = "/cattleServer.log"
 
+nominalHour :: NominalDiffTime
+nominalHour = secondsToNominalDiffTime 3600
+
+halfHour :: Int
+halfHour = 1800000000
+
 main :: IO ()
-main = do
+main = recursiveBackup False
+
+-- | Calculate the difference in hours between two UTCTime values.
+hoursDiff :: UTCTime -> UTCTime -> Int
+hoursDiff t t' = round (diffUTCTime t t' / nominalHour)
+
+recursiveDirectoryExist :: String -> String -> IO ()
+recursiveDirectoryExist directory "" = do
+  dirExistance <- doesDirectoryExist (localPath <> "/" <> directory)
+  case dirExistance of
+    False -> do
+      callCommand $ "mkdir " <> localPath <> "/" <> directory
+      writeLog "Success" (directory <> " created successfully")
+    True -> return ()
+recursiveDirectoryExist directory tailS = do
+  recursiveDirectoryExist directory ""
+  recursiveDirectoryExist ( directory <> "/" <> takeWhile (/= '/') tailS ) (drop 1 $ dropWhile (/= '/') tailS)
+
+mkDateDir :: UTCTime -> IO String
+mkDateDir utc = do
+  let (timeText, _) = breakOn ":" (replace "T" "/T" (iso8601Show utc))
+      (dir, dirTail) = breakOn "/" (replace "-" "/" timeText)
+  recursiveDirectoryExist dir ( drop 1 dirTail )
+  return (dir <> dirTail)
+
+getLastBackup :: IO UTCTime
+getLastBackup = do
+  fileExistance <- doesFileExist (localPath <> logFile)
+  m_time <- case fileExistance of
+    False -> return Nothing
+    True  -> do
+      content <- readFile (localPath <> logFile)
+      return $ (searchLastBackup . reverse . lines) content
+  case m_time of
+    Just t  -> return t
+    Nothing -> do
+      current <- getCurrentTime
+      return (addUTCTime (-nominalDay) current)
+
+searchLastBackup :: [String] -> Maybe UTCTime
+searchLastBackup [] = Nothing
+searchLastBackup (line:lineS) = do
+  case dropWhile ( /= '{' ) line of
+    "{ Message: Success, Description: /upload downloaded successfully }" -> do
+      let timetext = takeWhile ( /= '{' ) line
+      iso8601ParseM (dropEnd 2 timetext)
+    _                                                                    -> searchLastBackup lineS
+
+recursiveBackup :: Bool -> IO ()
+recursiveBackup True = do
+  current <- getCurrentTime
+  saveBackup current
+  recursiveBackup False
+recursiveBackup False = do
+  threadDelay (halfHour)
+  doBackup <- do
+    lastBackup <- getLastBackup
+    current <- getCurrentTime
+    return $ (hoursDiff current lastBackup) > 8
+  recursiveBackup doBackup
+
+-- | Login to the server via SSH, backs up the database and downloads the full backup locally via SCP.
+-- Write to the log file during the process.
+saveBackup :: UTCTime -> IO ()
+saveBackup utc = do
   loginResponse <- runSimpleSSH loginToServer
   case loginResponse of
     Left err      -> do
-      writeLog $ ": Error\nDescription: Fail to " <> show err
+      writeLog "Error" ("Fail to " <> show err)
     Right session -> do
-      writeLog ": Success\nDescription: SSH connection started"
+      writeLog "Success" "SSH connection started"
       commandResponse <- runSimpleSSH $ databaseBackupInServer session
       case commandResponse of
         Left err     -> do
-          writeLog $ ": Error\nDescription: " <> show err
+          writeLog "Error" (show err)
         Right result -> do
           case resultExit result of
-            ExitFailure 1 -> writeLog $ ": Error\nDescription: " <> show (resultErr result)
-            _             -> writeLog $ ": Success\nDescription: " <> show (resultExit result) <> "-> yesod-project.sql created successfully" -- resultExit must not print an error
+            SSH.ExitSuccess -> writeLog "Success" "yesod-project.sql created successfully"
+            _           -> writeLog "Error" (show (resultErr result))
           closeResponse <- runSimpleSSH $ closeSession session
           case closeResponse of
             Left err -> do
-              writeLog $ ": Error\nDescription: " <> show err
+              writeLog "Error" (show err)
             Right () -> do
-              writeLog ": Success\nDescription: SSH connection closed"
-              callCommand $ "scp -r admin@" <> host <> ":" <> path <> sqlBackup <> " " <> localPath
-              writeLog ": Success\nDescription: yesod-project.sql downloaded successfully"
-              callCommand $ "scp -r admin@" <> host <> ":" <> "/upload " <> localPath <> "/upload"
-              writeLog ": Success\nDescription: /upload downloaded successfully"
+              writeLog "Success" "SSH connection closed"
+              dateDir <- mkDateDir utc
+              let dir = localPath <> "/" <> dateDir
+              (sqlExit', _, sqlErr') <- readProcessWithExitCode "scp" ["-r", ("<remote-user>@" <> host <> ":" <> path <> sqlBackup), dir] []
+              case sqlExit' of
+                E.ExitSuccess -> writeLog "Success" "yesod-project.sql downloaded successfully"
+                _             -> writeLog "Error" sqlErr'
+              (uploadExit', _, uploadErr') <- readProcessWithExitCode "scp" ["-r", ("<remote-user>@" <> host <> ":" <> "/upload"), (dir <> "/upload")] []
+              case uploadExit' of
+                E.ExitSuccess -> writeLog "Success" "/upload downloaded successfully"
+                _             -> writeLog "Error" uploadErr'
 
 loginToServer :: SimpleSSH Session
 loginToServer = do
@@ -61,9 +140,10 @@ databaseBackupInServer session = do
   response <- execCommand session $ "pg_dump -U postgres yesod-project > " <> path <> sqlBackup
   return response
 
-writeLog :: String -> IO ()
-writeLog message = do
+-- | Write a message to the log file.
+writeLog :: String -> String -> IO ()
+writeLog message description = do
   logs <- openFile (localPath <> logFile) AppendMode
   utcTime <- getCurrentTime
-  hPutStr logs (iso8601Show utcTime <> message <> "\n\n")
+  hPutStr logs (iso8601Show utcTime <> ": { Message: " <> message <> ", Description: " <> description <> " }\n")
   hClose logs
