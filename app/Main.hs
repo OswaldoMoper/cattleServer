@@ -33,7 +33,9 @@ halfHour :: Int
 halfHour = 1800000000
 
 main :: IO ()
-main = recursiveBackup False
+main = do
+  writeLog "Starting" "The service cattleServer has been started successfully"
+  recursiveBackup False
 
 -- | Calculate the difference in hours between two UTCTime values.
 hoursDiff :: UTCTime -> UTCTime -> Int
