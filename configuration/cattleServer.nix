@@ -17,7 +17,7 @@
       WorkingDirectory = "/home/<user>/cattleServer";
       ExecStart = ''${pkgs.cattleServer-wrapper}/bin/cattleServer-wrapped'';
       ExecStop = "";
-      Restart = "always";
+      # Restart = "always";
     };
   };
 }

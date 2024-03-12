@@ -28,12 +28,8 @@
               };
 
               shell.buildInputs = with pkgs; [
-                stylish-haskell
                 stack
-                haskell-language-server
                 ghcid
-                postgresql
-                nixUnstable
               ];
               shell.additional = hsPkgs: with hsPkgs; [ Cabal ];
             };

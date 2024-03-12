@@ -11,6 +11,7 @@ import           System.Exit                  as E
 import           System.IO
 import           System.Process
 
+-- TODO: Add function getByJSONFile to get the static inputs
 path :: String
 path = "/home/<remote-user>"
 
@@ -25,6 +26,15 @@ host = "0.0.0.0"
 
 logFile :: String
 logFile = "/cattleServer.log"
+
+knownHosts :: String
+knownHosts = "/home/<user>/.ssh/known_hosts"
+
+publicKey :: String
+publicKey = "/home/<user>/.ssh/exampleKey-ed25519.pub"
+
+privateKey :: String
+privateKey = "/home/<user>/.ssh/exampleKey-ed25519"
 
 nominalHour :: NominalDiffTime
 nominalHour = secondsToNominalDiffTime 3600
@@ -41,6 +51,7 @@ main = do
 hoursDiff :: UTCTime -> UTCTime -> Int
 hoursDiff t t' = round (diffUTCTime t t' / nominalHour)
 
+-- TODO: Add function to delete unused directories
 recursiveDirectoryExist :: String -> String -> IO ()
 recursiveDirectoryExist directory "" = do
   dirExistance <- doesDirectoryExist (localPath <> "/" <> directory)
@@ -83,6 +94,7 @@ searchLastBackup (line:lineS) = do
       iso8601ParseM (dropEnd 2 timetext)
     _                                                                    -> searchLastBackup lineS
 
+-- TODO: Add function to delete deprecated backups (10 days ago)
 recursiveBackup :: Bool -> IO ()
 recursiveBackup True = do
   current <- getCurrentTime
@@ -122,25 +134,29 @@ saveBackup utc = do
               writeLog "Success" "SSH connection closed"
               dateDir <- mkDateDir utc
               let dir = localPath <> "/" <> dateDir
-              (sqlExit', _, sqlErr') <- readProcessWithExitCode "scp" ["-r", ("<remote-user>@" <> host <> ":" <> path <> sqlBackup), dir] []
+              (sqlExit', _, sqlErr') <- databaseBackupLocally (path <> sqlBackup) (dir <> "/yesod-project.sql")
               case sqlExit' of
                 E.ExitSuccess -> writeLog "Success" "yesod-project.sql downloaded successfully"
                 _             -> writeLog "Error" sqlErr'
-              (uploadExit', _, uploadErr') <- readProcessWithExitCode "scp" ["-r", ("<remote-user>@" <> host <> ":" <> "/upload"), (dir <> "/upload")] []
+              (uploadExit', _, uploadErr') <- databaseBackupLocally "/upload" (dir <> "/upload")
               case uploadExit' of
                 E.ExitSuccess -> writeLog "Success" "/upload downloaded successfully"
                 _             -> writeLog "Error" uploadErr'
 
 loginToServer :: SimpleSSH Session
 loginToServer = do
-  session <- openSession host 22 "/home/<user>/.ssh/known_hosts"
-  auth_session <- authenticateWithKey session "<remote-user>" "/home/<user>/.ssh/exampleKey-ed25519.pub" "/home/<user>/.ssh/exampleKey-ed25519" ""
+  session <- openSession host 22 knownHosts
+  auth_session <- authenticateWithKey session "<remote-user>" publicKey privateKey ""
   return auth_session
 
 databaseBackupInServer :: Session -> SimpleSSH Result
 databaseBackupInServer session = do
   response <- execCommand session $ "pg_dump -U postgres yesod-project > " <> path <> sqlBackup
   return response
+
+databaseBackupLocally :: String -> String -> IO (ExitCode, String, String)
+databaseBackupLocally remote local = do
+  readProcessWithExitCode "/run/current-system/sw/bin/scp" [ "-i", privateKey, "-r", ("<remote-user>@" <> host <> ":" <> remote), local] []
 
 -- | Write a message to the log file.
 writeLog :: String -> String -> IO ()

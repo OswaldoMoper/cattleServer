@@ -3,12 +3,12 @@ version:        0.10.0
 
 dependencies:
   - base
+  - directory
+  - extra
   - process
   - simplessh
   - text
   - time
-  - extra
-  - directory
 
 # The library contains all of our application code. The executable
 # defined below is just a thin wrapper.

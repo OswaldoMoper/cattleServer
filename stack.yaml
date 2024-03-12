@@ -72,6 +72,6 @@ extra-deps:
 
 nix:
   enable: true
-  packages: [ zlib , postgresql , libssh2 ]
+  packages: [ zlib , libssh2 , openssh ]
 system-ghc: true
 install-ghc: false
