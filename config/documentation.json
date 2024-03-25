@@ -1,0 +1,58 @@
+[
+    {
+        "appConfig": {
+            "name": "Add here the name of your application, this will be used to create the logfile, sqlfile and backup directory",
+            "structure": "Add here the /upload directory of your application in the remote host"
+        },
+        "serviceConfig": {
+            "backupDatabase": {
+                "name": "Add here the username to use in postgresql",
+                "structure": "Add here the name of the database structure"
+            },
+            "keyDirectory": {
+                "name": "Add here the name of your SSH key, without the extension",
+                "structure": "Add here the path of your SSH key, without the filename"
+            },
+            "knownHosts": "Add here the path to your knownHosts file",
+            "localHost": {
+                "hostName": "Add here the Hostname of the local device",
+                "userHome": "Add here the working directory of the local device",
+                "userName": "Add here the Username of the local device"
+            },
+            "portNumber": Add here the port will be used to connect to the remote host (def 22),
+            "remoteHost": {
+                "hostName": "Add here the Hostname of the remote device",
+                "userHome": "Add here the working directory of the remote device",
+                "userName": "Add here the Username of the remote device"
+            }
+        }
+    },
+    {
+        "appConfig": {
+            "name": "We can use this service to backup more than one web application",
+            "structure": "because cattleServer reads a Maybe [JSON]"
+        },
+        "serviceConfig": {
+            "backupDatabase": {
+                "name": "or we can use another appConfig",
+                "structure": "to configure other times backups"
+            },
+            "keyDirectory": {
+                "name": "in the future of the cattleServer service",
+                "structure": "a TIME STRUCTURE will be added"
+            },
+            "knownHosts": "to configure in the cattleServer service",
+            "localHost": {
+                "hostName": "how often to make backups: ",
+                "userHome": "once every 8 hours, ",
+                "userName": "once a day, once a month, etc."
+            },
+            "portNumber": Add here the port will be used to connect to the remote host (def 22),
+            "remoteHost": {
+                "hostName": "And how often to delete",
+                "userHome": "deprecated backups: ",
+                "userName": "weekly, bi-weekly, monthly"
+            }
+        }
+    }
+]

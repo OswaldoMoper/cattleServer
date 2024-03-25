@@ -1,0 +1,28 @@
+{
+    "appConfig": {
+        "name": "Example",
+        "structure": "/loads"
+    },
+    "serviceConfig": {
+        "backupDatabase": {
+            "name": "postgres",
+            "structure": "yesod-project"
+        },
+        "keyDirectory": {
+            "name": "exampleKey-ed25519",
+            "structure": "/home/<user>/.ssh"
+        },
+        "knownHosts": "/home/<user>/.ssh/known_hosts",
+        "localHost": {
+            "hostName": "<localhost>",
+            "userHome": "/home/<user>",
+            "userName": "<user>"
+        },
+        "portNumber": 22,
+        "remoteHost": {
+            "hostName": "0.0.0.0",
+            "userHome": "/home/<remote-user>",
+            "userName": "<remote-user>"
+        }
+    }
+}

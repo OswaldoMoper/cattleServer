@@ -2,7 +2,10 @@ name:           cattleServer
 version:        0.10.0
 
 dependencies:
+  - aeson
+  - aeson-pretty
   - base
+  - bytestring
   - directory
   - extra
   - process
@@ -13,7 +16,7 @@ dependencies:
 # The library contains all of our application code. The executable
 # defined below is just a thin wrapper.
 library:
-  source-dirs: app
+  source-dirs: src
   when:
   - condition: (flag(dev)) || (flag(library-only))
     then:
