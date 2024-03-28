@@ -1,28 +1,70 @@
 {
-    "appConfig": {
-        "name": "Example",
-        "structure": "/loads"
-    },
-    "serviceConfig": {
-        "backupDatabase": {
-            "name": "postgres",
-            "structure": "yesod-project"
+    "apps": [
+        {
+            "appConfig": {
+                "name": "Example",
+                "structure": "/loads"
+            },
+            "databaseConfig": {
+                "name": "postgres",
+                "structure": "yesod-project"
+            },
+            "serviceConfig": {
+                "backupFrequency": {
+                    "times": 8,
+                    "unit": "Hours"
+                },
+                "deleteFrequency": {
+                    "times": 10,
+                    "unit": "Days"
+                },
+                "keyDirectory": {
+                    "name": "exampleKey-ed25519",
+                    "structure": "/home/<user>/.ssh"
+                },
+                "portNumber": 22,
+                "remoteHost": {
+                    "hostName": "0.0.0.0",
+                    "userHome": "/home/<remote-user>",
+                    "userName": "<remote-user>"
+                }
+            }
         },
-        "keyDirectory": {
-            "name": "exampleKey-ed25519",
-            "structure": "/home/<user>/.ssh"
-        },
-        "knownHosts": "/home/<user>/.ssh/known_hosts",
-        "localHost": {
-            "hostName": "<localhost>",
-            "userHome": "/home/<user>",
-            "userName": "<user>"
-        },
-        "portNumber": 22,
-        "remoteHost": {
-            "hostName": "0.0.0.0",
-            "userHome": "/home/<remote-user>",
-            "userName": "<remote-user>"
+        {
+            "appConfig": {
+                "name": "Example 2",
+                "structure": "/loads"
+            },
+            "databaseConfig": {
+                "name": "postgres",
+                "structure": "yesod-project"
+            },
+            "serviceConfig": {
+                "backupFrequency": {
+                    "times": 10,
+                    "unit": "Days"
+                },
+                "deleteFrequency": {
+                    "times": 2,
+                    "unit": "Months"
+                },
+                "keyDirectory": {
+                    "name": "exampleKey-ed25519",
+                    "structure": "/home/<user>/.ssh"
+                },
+                "portNumber": 22,
+                "remoteHost": {
+                    "hostName": "0.0.0.0",
+                    "userHome": "/home/<remote-user>",
+                    "userName": "<remote-user>"
+                }
+            }
         }
+    ],
+    "knownHosts": "/home/<user>/.ssh/known_hosts",
+    "localHost": {
+        "hostName": "<localhost>",
+        "userHome": "/home/<user>",
+        "userName": "<user>"
     }
 }

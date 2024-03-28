@@ -7,6 +7,7 @@ import           Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy     as B
 import           GHC.Generics             (Generic)
 import           System.Directory         (doesFileExist)
+import           Time
 
 data Host = Host
   { hostName :: String
@@ -26,27 +27,35 @@ instance FromJSON Route
 instance ToJSON Route
 
 data Config = Config
-  { remoteHost     :: Host
-  , localHost      :: Host
-  , knownHosts     :: String
-  , keyDirectory   :: Route
-  , backupDatabase :: Route
-  , portNumber     :: Integer
-  -- , backupTime      :: Time
+  { remoteHost      :: Host
+  , keyDirectory    :: Route
+  , portNumber      :: Integer
+  , backupFrequency :: UnitTime
+  , deleteFrequency :: UnitTime
   } deriving (Generic, Show, Read)
 
 instance FromJSON Config
 instance ToJSON Config
 
 data App = App
-  { appConfig     :: Route
-  , serviceConfig :: Config
+  { appConfig      :: Route
+  , databaseConfig :: Route
+  , serviceConfig  :: Config
   } deriving (Generic, Show, Read)
 
 instance FromJSON App
 instance ToJSON App
 
-readJSONconfig :: IO (Maybe [App])
+data Service = Service
+  { localHost  :: Host
+  , knownHosts :: String
+  , apps       :: [App]
+  }deriving (Generic, Show, Read)
+
+instance FromJSON Service
+instance ToJSON Service
+
+readJSONconfig :: IO (Maybe Service)
 readJSONconfig = do
   fileExistance <- doesFileExist "./config/cattleServer.json"
   case fileExistance of
@@ -59,17 +68,22 @@ readJSONconfig = do
 
 writeJSONconfig :: IO ()
 writeJSONconfig = do
-  let remote =
-        Host
-        { hostName = "0.0.0.0"
-        , userName = "<remote-user>"
-        , userHome = "/home/<remote-user>"
-        }
-      local =
+  let local =
         Host
         { hostName = "<localhost>"
         , userName = "<user>"
         , userHome = "/home/<user>"
+        }
+      appconfig =
+        Route
+        { name      = "Example"
+        , structure = "/loads"
+        }
+      remote =
+        Host
+        { hostName = "0.0.0.0"
+        , userName = "<remote-user>"
+        , userHome = "/home/<remote-user>"
         }
       keys =
         Route
@@ -81,23 +95,34 @@ writeJSONconfig = do
         { name      = "postgres"
         , structure = "yesod-project"
         }
+      frequency =
+        UnitTime
+        { unit  = "Hours"
+        , times = 8
+        }
+      delete =
+        UnitTime
+        { unit  = "Days"
+        , times = 10
+        }
       serviceconfig =
         Config
         { remoteHost      = remote
-        , localHost       = local
-        , knownHosts      = "/home/<user>/.ssh/known_hosts"
         , keyDirectory    = keys
-        , backupDatabase  = database
         , portNumber      = 22
-        }
-      appconfig =
-        Route
-        { name      = "Example"
-        , structure = "/loads"
+        , backupFrequency = frequency
+        , deleteFrequency = delete
         }
       app =
         App
-        { appConfig     = appconfig
-        , serviceConfig = serviceconfig
+        { appConfig      = appconfig
+        , databaseConfig = database
+        , serviceConfig  = serviceconfig
         }
-  B.writeFile "./config/cattleServer.json" (encodePretty app)
+      software =
+        Service
+        { localHost  = local
+        , knownHosts = "/home/<user>/.ssh/known_hosts"
+        , apps       = app : app : []
+        }
+  B.writeFile "./config/cattleServer.json" (encodePretty software)
