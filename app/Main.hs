@@ -3,10 +3,9 @@ module Main where
 import           Config
 import           Control.Concurrent           (threadDelay)
 import           Data.Time.Clock
-import           Data.Time.Format.ISO8601     (iso8601Show)
 import           Network.SSH.Client.SimpleSSH as SSH
+import           System.Directory             (doesDirectoryExist)
 import           System.Exit                  as E
-import           System.IO
 import           System.Process
 import           Time
 
@@ -14,8 +13,8 @@ main :: IO ()
 main = do
   cattleServerDir <- recursiveDirectoryExist "./.." "cattleServer-Logs/" ""
   case cattleServerDir of
-    True  -> writeLog "./../cattleServer-Logs/cattleServer.log" "Started" "The cattleServer service has been started correctly"
-    False -> writeLog "./../cattleServer-Logs/cattleServer.log" "Started" "The cattleServer service log folder has been created"
+    True  -> writeLog ("./../cattleServer-Logs/" <> logFile) "Started" "The cattleServer service has been started correctly"
+    False -> writeLog ("./../cattleServer-Logs/" <> logFile) "Started" "The cattleServer service log folder has been created"
   recursiveBackup False
 
 recursiveBackup :: Bool -> IO ()
@@ -30,9 +29,9 @@ recursiveBackup True = do
       recursiveBackup False
     Just software -> do
       recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software)
+      recursiveDeleteAppBackup (apps software) (localHost software)
       recursiveBackup False
 
--- TODO: Add function to delete deprecated backups (10 days ago)
 saveAppBackup :: App -> String -> Host -> IO ()
 saveAppBackup app knownHost localHost = do
   current <- getCurrentTime
@@ -50,7 +49,7 @@ saveAppBackup app knownHost localHost = do
       _        -> return $ (hoursDiff  current lastBackup) > 8
   case doBackup of
     True  -> do
-      _ <- recursiveDirectoryExist localPath "/backup" nameApp
+      _ <- recursiveDirectoryExist localPath "backup" nameApp
       saveBackup current (appConfig app) (databaseConfig app) (serviceConfig app) knownHost localHost
     False -> return ()
 
@@ -59,6 +58,33 @@ recursiveSaveAppBackup [] _ _                     = return ()
 recursiveSaveAppBackup (app:apps) knownHost localHost = do
   saveAppBackup app knownHost localHost
   recursiveSaveAppBackup apps knownHost localHost
+
+deleteAppBackup :: App -> Host -> IO ()
+deleteAppBackup app localHost = do
+  current <- getCurrentTime
+  let localPath   = userHome localHost
+      nameApp     = name (appConfig app)
+      deleteF     = deleteFrequency (serviceConfig app)
+      logFilePath = localPath <> "/cattleServer-Logs/" <> nameApp  <> ".log"
+      timeDir     = timeToStringDir (subsNominalTime (times deleteF) (unit deleteF) current)
+      currentS    = timeToStringDir current
+      deleteDir   = localPath <> "/backup/" <> nameApp <> "/" <> recursiveStringDir currentS timeDir (unit deleteF) (times deleteF)
+  delete <- doesDirectoryExist deleteDir
+  case delete of
+    False -> return ()
+    True  -> do
+      (delExit, _, delErr) <- readProcessWithExitCode "rm" ["-r", deleteDir] []
+      case delExit of
+        E.ExitSuccess -> do
+          writeLog logFilePath "Success" (deleteDir <> " deleted successfully (obsolete backup)")
+          writeLog ("./../cattleServer-Logs" <> logFile) "Success" ("The service cattleServer has successfully deleted " <> nameApp <> " obsolete backup")
+        _             -> writeLog ("./../cattleServer-Logs" <> logFile) "Error" delErr
+
+recursiveDeleteAppBackup :: [App] -> Host -> IO ()
+recursiveDeleteAppBackup []         _         = return ()
+recursiveDeleteAppBackup (app:apps) localHost = do
+  deleteAppBackup app localHost
+  recursiveDeleteAppBackup apps localHost
 
 -- | Login to the server via SSH, backs up the database and downloads the full backup locally via SCP.
 -- Write to the log file during the process.

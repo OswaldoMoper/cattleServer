@@ -4,7 +4,8 @@ module Time where
 
 -- import           Config
 import           Data.Aeson
-import           Data.List.Extra          (breakOn, dropEnd, replace)
+import           Data.List.Extra          (breakOn, dropEnd, dropWhileEnd,
+                                           replace, takeWhileEnd)
 import           Data.Time.Clock
 import           Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
 import           GHC.Generics             (Generic)
@@ -51,15 +52,50 @@ weeksDiff t t' = round (diffUTCTime t t' / nominalWeek)
 monthsDiff :: UTCTime -> UTCTime -> Int
 monthsDiff t t' = round (diffUTCTime t t' / nominalMonth)
 
+-- | Add UTCTime in units of time
+subsNominalTime :: Int -> String -> UTCTime -> UTCTime
+subsNominalTime factor u utc =
+  case u of
+    "Hours"  -> addUTCTime (multiply nominalHour  (-factor)) utc
+    "Days"   -> addUTCTime (multiply nominalDay   (-factor)) utc
+    "Weeks"  -> addUTCTime (multiply nominalWeek  (-factor)) utc
+    "Months" -> addUTCTime (multiply nominalMonth (-factor)) utc
+    _        -> addUTCTime (multiply nominalDay   (-10))     utc
+
+multiply :: NominalDiffTime -> Int -> NominalDiffTime
+multiply time factor = fromRational (toRational time * toRational factor)
+
+timeToStringDir :: UTCTime -> String
+timeToStringDir utc = do
+  let (timeText, _)  = breakOn ":" (replace "T" "/T" (iso8601Show utc))
+  replace "-" "/" timeText
+
+dropTailDir :: String -> String
+dropTailDir = (dropEnd 1) . (dropWhileEnd (/= '/'))
+
+takeTailInt :: String -> Int
+takeTailInt = read . (takeWhileEnd (/= '/')) . dropTailDir
+
+recursiveStringDir :: String -> String -> String -> Int -> String
+recursiveStringDir current deleteDir "Days" number = do
+  let currentDay = takeTailInt current
+  case currentDay == number of
+    True  -> recursiveStringDir (dropTailDir current) (dropTailDir deleteDir) "Months" 1
+    False -> dropTailDir deleteDir
+recursiveStringDir current deleteDir "Months" number = do
+  let currentMonth = takeTailInt current
+  case currentMonth == number of
+    True  -> recursiveStringDir (dropTailDir current) (dropTailDir deleteDir) "Years" 1
+    False -> dropTailDir deleteDir
+recursiveStringDir _ deleteDir _ _ = dropTailDir deleteDir
+
 mkDateDir :: String -> String -> UTCTime -> IO String
 mkDateDir localPath backupApp utc = do
-  let (timeText, _)  = breakOn ":" (replace "T" "/T" (iso8601Show utc))
-      backupDir      = backupApp <> "/" <> (replace "-" "/" timeText)
+  let backupDir      = backupApp <> "/" <> timeToStringDir utc
       (dir, dirTail) = breakOn "/" backupDir
   _ <- recursiveDirectoryExist localPath dir ( drop 1 dirTail )
   return (dir <> dirTail)
 
--- TODO: Add function to delete unused directories
 recursiveDirectoryExist :: String -> String -> String -> IO Bool
 recursiveDirectoryExist localPath directory "" = do
   dirExistance <- doesDirectoryExist (localPath <> "/" <> directory)
