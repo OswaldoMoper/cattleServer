@@ -97,7 +97,7 @@ saveBackup utc app database config knownHost localHost = do
       remoteDir   = hostName (remoteHost config)
       logFilePath = localPath <> "/cattleServer-Logs/" <> appName  <> ".log"
   writeLog ("./../cattleServer-Logs" <> logFile) "Backup in process" ("The cattleServer service is backing up " <> appName)
-  loginResponse <- runSimpleSSH (loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config))
+  loginResponse <- loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config) logFilePath
   case loginResponse of
     Left err      -> do
       writeLog logFilePath "Error" ("Fail to " <> show err)
@@ -130,13 +130,23 @@ saveBackup utc app database config knownHost localHost = do
                   writeLog ("./../cattleServer-Logs" <> logFile) "Success" ("The service cattleServer has successfully backed up " <> appName)
                 _             -> writeLog logFilePath "Error" uploadErr'
 
-loginToServer :: Host -> Integer -> String -> Route -> SimpleSSH Session
-loginToServer remote port knownHost keys = do
-  session <- openSession (hostName remote) port knownHost
-  let privateKey = (structure keys <> "/" <> name keys)
-      publicKey = (privateKey <> ".pub")
-  auth_session <- authenticateWithKey session (userName remote) publicKey privateKey ""
-  return auth_session
+loginToServer :: Host -> Integer -> String -> Route -> String -> IO (Either SimpleSSHError Session)
+loginToServer remote port knownHost keys logFilePath = do
+  sessionResponse <- runSimpleSSH (openSession (hostName remote) port knownHost)
+  case sessionResponse of
+    Left err      -> do
+      writeLog logFilePath "Session Error" ("Fail to " <> show err)
+      return sessionResponse
+    Right session -> do
+      let privateKey = (structure keys <> "/" <> name keys)
+          publicKey = (privateKey <> ".pub")
+      authResponse <- runSimpleSSH (authenticateWithKey session (userName remote) publicKey privateKey "")
+      case authResponse of
+        Left err           -> do
+          writeLog logFilePath "Session Auth Error" ("Fail to " <> show err)
+          return authResponse
+        Right auth_session -> do
+          return authResponse
 
 databaseBackupInServer :: Session -> Route -> Host -> SimpleSSH Result
 databaseBackupInServer session database remote = do
