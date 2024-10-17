@@ -71,7 +71,7 @@ extra-deps:
   - cabal-pkg-config-version-hook-0.1.0.0@sha256:98b1313ee7ae65fca37a011c65d9f912774e32b03fc1e6ececb50072cfea86a8,961
 
 nix:
-  enable: true
+  enable: false
   packages: [ zlib , libssh2 , openssh ]
 system-ghc: true
 install-ghc: false

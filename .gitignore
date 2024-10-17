@@ -3,6 +3,7 @@
 .ghc
 .stackage
 .bash_history
+.vscode/
 
 # Haskell gitignore template
 dist-*
