@@ -3,6 +3,9 @@ module Main where
 import           Config
 import           Control.Concurrent           (threadDelay)
 import           Data.Time.Clock
+import           KnownHosts                   (Request (..), ensureKnownHost,
+                                               mayProceed, outcomeDescription,
+                                               outcomeTag)
 import           Network.SSH.Client.SimpleSSH as SSH
 import           Proc                         (runTool, shellQuote)
 import           System.Directory             (doesDirectoryExist)
@@ -40,12 +43,12 @@ recursiveBackup True = do
     Just software -> do
       let logDirPath = resolveLogDir software
       _ <- ensureLogDir logDirPath
-      recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath
+      recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath (resolveHostKeyPolicy software)
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
       recursiveBackup False
 
-saveAppBackup :: App -> String -> Host -> FilePath -> IO ()
-saveAppBackup app knownHost localHost logDirPath = do
+saveAppBackup :: App -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
+saveAppBackup app knownHost localHost logDirPath policy = do
   current <- getCurrentTime
   let localPath = userHome localHost
       nameApp   = name (appConfig app)
@@ -62,14 +65,14 @@ saveAppBackup app knownHost localHost logDirPath = do
   case doBackup of
     True  -> do
       _ <- recursiveDirectoryExist localPath "backup" nameApp
-      saveBackup current (appConfig app) (databaseConfig app) (serviceConfig app) knownHost localHost logDirPath
+      saveBackup current (appConfig app) (databaseConfig app) (serviceConfig app) knownHost localHost logDirPath policy
     False -> return ()
 
-recursiveSaveAppBackup :: [App] -> String -> Host -> FilePath -> IO ()
-recursiveSaveAppBackup [] _ _ _                                  = return ()
-recursiveSaveAppBackup (app:apps) knownHost localHost logDirPath = do
-  saveAppBackup app knownHost localHost logDirPath
-  recursiveSaveAppBackup apps knownHost localHost logDirPath
+recursiveSaveAppBackup :: [App] -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
+recursiveSaveAppBackup [] _ _ _ _                                       = return ()
+recursiveSaveAppBackup (app:apps) knownHost localHost logDirPath policy = do
+  saveAppBackup app knownHost localHost logDirPath policy
+  recursiveSaveAppBackup apps knownHost localHost logDirPath policy
 
 deleteAppBackup :: App -> Host -> FilePath -> IO ()
 deleteAppBackup app localHost logDirPath = do
@@ -100,15 +103,15 @@ recursiveDeleteAppBackup (app:apps) localHost logDirPath = do
 
 -- | Login to the server via SSH, backs up the database and downloads the full backup locally via SCP.
 -- Write to the log file during the process.
-saveBackup :: UTCTime -> Route -> Route -> Config -> String -> Host -> FilePath -> IO ()
-saveBackup utc app database config knownHost localHost logDirPath = do
+saveBackup :: UTCTime -> Route -> Route -> Config -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
+saveBackup utc app database config knownHost localHost logDirPath policy = do
   let appName     = name app
       sqlFile     = structure database <> ".sql"
       localPath   = userHome localHost
       remotePath  = userHome (remoteHost config)
       logFilePath = appLogPath logDirPath appName
   writeLog (serviceLogPath logDirPath) "Backup in process" ("The cattleServer service is backing up " <> appName)
-  loginResponse <- loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config) logFilePath
+  loginResponse <- loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config) policy (resolveHostKeys config) (hostKeyFingerprint config) logFilePath
   case loginResponse of
     Left err      -> do
       writeLog logFilePath "Error" ("Fail to " <> show err)
@@ -141,8 +144,31 @@ saveBackup utc app database config knownHost localHost logDirPath = do
                   writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
                 _             -> writeLog logFilePath "Error" uploadErr'
 
-loginToServer :: Host -> Integer -> String -> Route -> String -> IO (Either SimpleSSHError Session)
-loginToServer remote port knownHost keys logFilePath = do
+-- | Establish that the remote host is trusted, then open a session to it.
+--
+-- libssh2 refuses a host that is not in the @known_hosts@ file, which used to
+-- mean somebody had to log in by hand once per machine before the service
+-- could work. That step happens here now.
+loginToServer :: Host -> Integer -> String -> Route
+              -> HostKeyPolicy -> [String] -> Maybe String
+              -> String -> IO (Either SimpleSSHError Session)
+loginToServer remote port knownHost keys policy declared m_pinned logFilePath = do
+  outcome <- ensureKnownHost Request
+    { reqFile        = knownHost
+    , reqHost        = hostName remote
+    , reqPort        = port
+    , reqPolicy      = policy
+    , reqDeclared    = declared
+    , reqFingerprint = m_pinned
+    }
+  writeLog logFilePath (outcomeTag outcome)
+           (outcomeDescription (hostName remote) port knownHost outcome)
+  if not (mayProceed outcome)
+    then return (Left KnownhostsCheck)
+    else loginToTrustedServer remote port knownHost keys logFilePath
+
+loginToTrustedServer :: Host -> Integer -> String -> Route -> String -> IO (Either SimpleSSHError Session)
+loginToTrustedServer remote port knownHost keys logFilePath = do
   sessionResponse <- runSimpleSSH (openSession (hostName remote) port knownHost)
   case sessionResponse of
     Left err      -> do
