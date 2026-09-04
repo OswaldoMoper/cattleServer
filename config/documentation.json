@@ -1,14 +1,16 @@
 {
     "localHost": {
         "hostName": "Add here the Hostname of the local device",
-        "userHome": "Add here the working directory of the local device",
+        "userHome": "Add here the working directory of the local device. Backups land in <userHome>/backup",
         "userName": "Add here the Username of the local device"
     },
-    "knownHosts": "Add here the path to your knownHosts file",
+    "knownHosts": "Add here the path to your knownHosts file. cattleServer maintains it: see hostKeyPolicy",
+    "logDir": "Optional. Where the service log and the per-application logs go. Defaults to <localHost.userHome>/cattleServer-Logs. The service log is also how the scheduler remembers the last backup, so moving it makes cattleServer take one immediately",
+    "hostKeyPolicy": "Optional, one of 'accept-new' (default) or 'strict'. accept-new runs ssh-keyscan on a host that is not in knownHosts yet and adds what it answers; strict never writes to the file. Neither ever replaces an entry that is already there, so a host whose key changed always fails",
     "apps": [
         {
             "appConfig": {
-                "name": "Add here the name of your application, this will be used to create the logfile, sqlfile and backup directory",
+                "name": "Add here the name of your application, this will be used to create the logfile, sqlfile and backup directory. Renaming it makes cattleServer lose track of the last backup and take one immediately",
                 "structure": "Add here the /upload directory of your application in the remote host"
             },
             "databaseConfig": {
@@ -18,14 +20,14 @@
             "serviceConfig": {
                 "backupFrequency": {
                     "unit": "Add here the time unit of the recursive backup, (default = Hours). Means 8 Hours",
-                    "times": Add here how often (def 8 )
+                    "times": "Add here how often (def 8 )"
                 },
                 "deleteFrequency": {
-                    "unit": "Add here the time unit of the recursive backup, (default = Days). Means 10 Days"
-                    "times": Add here how often (def 10 )
+                    "unit": "Add here the time unit of the recursive backup, (default = Days). Means 10 Days",
+                    "times": "Add here how often (def 10 )"
                 },
                 "keyDirectory": {
-                    "name": "Add here the name of your SSH key, without the extension",
+                    "name": "Add here the name of your SSH key, without the extension. The .pub is read from the same directory",
                     "structure": "Add here the path of your SSH key, without the filename"
                 },
                 "remoteHost": {
@@ -33,7 +35,9 @@
                     "userHome": "Add here the working directory of the remote device",
                     "userName": "Add here the Username of the remote device"
                 },
-                "portNumber": Add here the port will be used to connect to the remote host (def 22)
+                "portNumber": "Add here the port will be used to connect to the remote host (def 22)",
+                "hostKeys": "Optional. The remote host's public keys, as knownHosts lines or bare '<type> <base64>' pairs. Declared keys are installed as they are, without asking the network, which is what makes hostKeyPolicy 'strict' usable",
+                "hostKeyFingerprint": "Optional, 'SHA256:...'. A scanned key has to match it to be trusted. Only consulted when the host is scanned, not when hostKeys are declared"
             }
         },
         {
@@ -48,11 +52,11 @@
             "serviceConfig": {
                 "backupFrequency": {
                     "unit": "That's why the cattleServer service allows you to configure",
-                    "times": Add here how often (def 8 )
+                    "times": "Add here how often (def 8 )"
                 },
                 "deleteFrequency": {
-                    "unit": "backup and deletion times."
-                    "times": Add here how often (def 10 )
+                    "unit": "backup and deletion times.",
+                    "times": "Add here how often (def 10 )"
                 },
                 "keyDirectory": {
                     "name": "We can configure the cattleServer service to",
@@ -63,7 +67,9 @@
                     "userHome": "And to remove deprecated backups: ",
                     "userName": "every 10 days, biweekly, monthly, etc."
                 },
-                "portNumber": Add here the port will be used to connect to the remote host (def 22)
+                "portNumber": "Add here the port will be used to connect to the remote host (def 22)",
+                "hostKeys": "Each application names its own remote, so each carries its own host keys",
+                "hostKeyFingerprint": "even when several of them point at the same server."
             }
         }
     ]

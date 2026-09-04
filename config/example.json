@@ -1,4 +1,12 @@
 {
+    "localHost": {
+        "hostName": "<localhost>",
+        "userHome": "/home/<user>",
+        "userName": "<user>"
+    },
+    "knownHosts": "/home/<user>/.ssh/known_hosts",
+    "logDir": "/home/<user>/cattleServer-Logs",
+    "hostKeyPolicy": "accept-new",
     "apps": [
         {
             "appConfig": {
@@ -27,7 +35,8 @@
                     "hostName": "0.0.0.0",
                     "userHome": "/home/<remote-user>",
                     "userName": "<remote-user>"
-                }
+                },
+                "hostKeyFingerprint": "SHA256:<base64 fingerprint>"
             }
         },
         {
@@ -52,19 +61,16 @@
                     "name": "exampleKey-ed25519",
                     "structure": "/home/<user>/.ssh"
                 },
-                "portNumber": 22,
+                "portNumber": 2222,
                 "remoteHost": {
                     "hostName": "0.0.0.0",
                     "userHome": "/home/<remote-user>",
                     "userName": "<remote-user>"
-                }
+                },
+                "hostKeys": [
+                    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI<base64 key>"
+                ]
             }
         }
-    ],
-    "knownHosts": "/home/<user>/.ssh/known_hosts",
-    "localHost": {
-        "hostName": "<localhost>",
-        "userHome": "/home/<user>",
-        "userName": "<user>"
-    }
+    ]
 }
