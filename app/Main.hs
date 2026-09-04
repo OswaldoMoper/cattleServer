@@ -4,6 +4,7 @@ import           Config
 import           Control.Concurrent           (threadDelay)
 import           Data.Time.Clock
 import           Network.SSH.Client.SimpleSSH as SSH
+import           Proc                         (runTool, shellQuote)
 import           System.Directory             (doesDirectoryExist)
 import           System.Exit                  as E
 import           System.Process
@@ -105,7 +106,6 @@ saveBackup utc app database config knownHost localHost logDirPath = do
       sqlFile     = structure database <> ".sql"
       localPath   = userHome localHost
       remotePath  = userHome (remoteHost config)
-      remoteDir   = hostName (remoteHost config)
       logFilePath = appLogPath logDirPath appName
   writeLog (serviceLogPath logDirPath) "Backup in process" ("The cattleServer service is backing up " <> appName)
   loginResponse <- loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config) logFilePath
@@ -130,11 +130,11 @@ saveBackup utc app database config knownHost localHost logDirPath = do
               writeLog logFilePath "Success" "SSH connection closed"
               backupDir <- mkDateDir localPath ("backup/" <> appName ) utc
               let dir = localPath <> "/" <> backupDir
-              (sqlExit', _, sqlErr') <- databaseBackupLocally (remotePath <> "/backup/" <> sqlFile ) (dir <> "/" <> sqlFile) remoteDir (keyDirectory config)
+              (sqlExit', _, sqlErr') <- databaseBackupLocally (remoteHost config) (portNumber config) knownHost (keyDirectory config) (remotePath <> "/backup/" <> sqlFile) (dir <> "/" <> sqlFile)
               case sqlExit' of
                 E.ExitSuccess -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
                 _             -> writeLog logFilePath "Error" sqlErr'
-              (uploadExit', _, uploadErr') <- databaseBackupLocally (structure app) (dir <> "/upload") remoteDir (keyDirectory config)
+              (uploadExit', _, uploadErr') <- databaseBackupLocally (remoteHost config) (portNumber config) knownHost (keyDirectory config) (structure app) (dir <> "/upload")
               case uploadExit' of
                 E.ExitSuccess -> do
                   writeLog logFilePath "Success" ("Uploads directory downloaded successfully")
@@ -153,21 +153,48 @@ loginToServer remote port knownHost keys logFilePath = do
           publicKey = (privateKey <> ".pub")
       authResponse <- runSimpleSSH (authenticateWithKey session (userName remote) publicKey privateKey "")
       case authResponse of
-        Left err           -> do
+        Left err -> do
           writeLog logFilePath "Session Auth Error" ("Fail to " <> show err)
-          return authResponse
-        Right auth_session -> do
-          return authResponse
+          closeResponse <- runSimpleSSH (closeSession session)
+          case closeResponse of
+            Left closeErr -> writeLog logFilePath "Error" (show closeErr)
+            Right ()      -> return ()
+        Right _  -> return ()
+      return authResponse
 
+-- | Dump the database on the remote host.
+--
+-- The command runs through a remote shell, so every value taken from the
+-- configuration is quoted rather than interpolated bare.
 databaseBackupInServer :: Session -> Route -> Host -> SimpleSSH Result
 databaseBackupInServer session database remote = do
   let dbName     = name database
       dbStruct   = structure database
       remoteHome = userHome remote
-  response <- execCommand session $ "pg_dump -U " <> dbName <> " " <> dbStruct <> " > " <> remoteHome <> "/backup/" <> dbStruct <> ".sql"
+  response <- execCommand session $
+    "pg_dump -U " <> shellQuote dbName
+      <> " "      <> shellQuote dbStruct
+      <> " > "    <> shellQuote (remoteHome <> "/backup/" <> dbStruct <> ".sql")
   return response
 
-databaseBackupLocally :: String -> String -> String -> Route -> IO (ExitCode, String, String)
-databaseBackupLocally remotePath localPath remoteDir keys = do
-  let privateKey = (structure keys <> "/" <> name keys)
-  readProcessWithExitCode "/run/current-system/sw/bin/scp" [ "-i", privateKey, "-r", ("<remote-user>@" <> remoteDir <> ":" <> remotePath), localPath] []
+-- | Copy a remote path to a local one with @scp@.
+--
+-- @scp@ is resolved on @PATH@, which the Nix wrapper and the systemd unit are
+-- responsible for populating. It uses the remote user and the port from the
+-- configuration, and the same @known_hosts@ file as libssh2 -- otherwise it
+-- would consult the invoking user's @~/.ssh@ and disagree about which hosts
+-- are trusted.
+databaseBackupLocally :: Host -> Integer -> FilePath -> Route -> String -> String
+                      -> IO (ExitCode, String, String)
+databaseBackupLocally remote port knownHost keys remotePath localPath =
+  runTool "scp"
+    [ "-i", structure keys <> "/" <> name keys
+    , "-P", show port
+    , "-o", "IdentitiesOnly=yes"
+    , "-o", "BatchMode=yes"
+    , "-o", "StrictHostKeyChecking=yes"
+    , "-o", "UserKnownHostsFile=" <> knownHost
+    , "-r"
+    , userName remote <> "@" <> hostName remote <> ":" <> remotePath
+    , localPath
+    ] []
