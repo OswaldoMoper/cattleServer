@@ -1,58 +1,71 @@
 {
   description = "Nix flake for cattleServer";
+
   inputs = {
-    flake-compat = {
-      url = "github:edolstra/flake-compat";
-      flake = false;
-    };
-    haskellNix.url = "github:input-output-hk/haskell.nix";
+    haskellNix.url  = "github:input-output-hk/haskell.nix";
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
-  outputs = inputs@{ self
-                   , nixpkgs
-                   , flake-utils
-                   , haskellNix
-                   , flake-compat
-                   }:
+
+  outputs = { self, nixpkgs, flake-utils, haskellNix }:
     let
-      overlays =
-        [ haskellNix.overlay
-          (final: prev: {
-            cattleServer = final.haskell-nix.stackProject {
-              src = final.haskell-nix.cleanSourceHaskell {
-                src = ./.;
-                name = "cattleServer";
-              };
-              shell.buildInputs = with pkgs; [
-                stack
-                ghcid
-              ];
-              shell.additional = hsPkgs: with hsPkgs; [ Cabal ];
-            };
-            cattleServer-wrapper = pkgs.writeShellApplication {
-              name = "cattleServer-wrapped";
-              runtimeInputs = [ self.packages.x86_64-linux.default ];
-              text = ''
-               cd /home/<user>/cattleServer
-               ${self.packages.x86_64-linux.default}/bin/cattleServer
-              '';
-            };
-          })
-        ];
-      pkgs = import nixpkgs { system = "x86_64-linux";
-                              inherit overlays;
-                              inherit (haskellNix) config;
-                            };
-      flake = pkgs.cattleServer.flake {};
-    in flake-utils.lib.eachSystem [ "x86_64-linux" ] (system: flake // {
-        packages = flake.packages // {
-          default = flake.packages."cattleServer:exe:cattleServer";
-          cattleServer-wrapper = pkgs.cattleServer-wrapper;
+      supportedSystems = [ "x86_64-linux" ];
+
+      overlay = final: _prev: {
+        cattleServer-project = final.haskell-nix.stackProject {
+          src = final.haskell-nix.cleanSourceHaskell {
+            src  = ./.;
+            name = "cattleServer";
+          };
+          shell.buildInputs = [ final.stack final.ghcid final.openssh ];
+          shell.additional  = hsPkgs: [ hsPkgs.Cabal ];
         };
-        apps = flake.apps // { default = flake.apps."cattleServer:exe:cattleServer"; };
+
+        cattleServer =
+          let
+            exe = final.cattleServer-project.hsPkgs.cattleServer.components.exes.cattleServer;
+          in
+          final.runCommand "cattleServer"
+            {
+              nativeBuildInputs = [ final.makeWrapper ];
+              meta = (exe.meta or { }) // { mainProgram = "cattleServer"; };
+            }
+            ''
+              mkdir -p $out/bin
+              makeWrapper ${exe}/bin/cattleServer $out/bin/cattleServer \
+                --prefix PATH : ${final.lib.makeBinPath [ final.openssh final.coreutils ]}
+            '';
+      };
+    in
+    flake-utils.lib.eachSystem supportedSystems (system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+          inherit (haskellNix) config;
+          overlays = [ haskellNix.overlay overlay ];
+        };
+        flake = pkgs.cattleServer-project.flake { };
+      in
+      flake // {
+        packages = flake.packages // {
+          default                = pkgs.cattleServer;
+          cattleServer           = pkgs.cattleServer;
+          cattleServer-unwrapped = flake.packages."cattleServer:exe:cattleServer";
+        };
+        apps = flake.apps // {
+          default = {
+            type    = "app";
+            program = "${pkgs.cattleServer}/bin/cattleServer";
+          };
+        };
         legacyPackages = pkgs;
-      });
+      })
+    // {
+      overlays.default          = overlay;
+      nixosModules.cattleServer = import ./nix/module.nix { inherit self; };
+      nixosModules.default      = self.nixosModules.cattleServer;
+    };
+
   # --- Flake Local Nix Configuration ----------------------------
   nixConfig = {
     extra-substituters = ["https://cache.iog.io"];
