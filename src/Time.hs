@@ -9,7 +9,8 @@ import           Data.List.Extra          (breakOn, dropEnd, dropWhileEnd,
 import           Data.Time.Clock
 import           Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
 import           GHC.Generics             (Generic)
-import           System.Directory         (doesDirectoryExist, doesFileExist)
+import           System.Directory         (createDirectoryIfMissing,
+                                           doesDirectoryExist, doesFileExist)
 import           System.IO
 import           System.Process
 
@@ -35,6 +36,27 @@ halfHour = 1800000000
 
 logFile :: String
 logFile = "/cattleServer.log"
+
+-- | Name of the directory holding the service and per-application logs.
+defaultLogDirName :: String
+defaultLogDirName = "cattleServer-Logs"
+
+-- | Path of the service-wide log file inside a log directory.
+serviceLogPath :: FilePath -> FilePath
+serviceLogPath dir = dir <> logFile
+
+-- | Path of an application's log file inside a log directory.
+appLogPath :: FilePath -> String -> FilePath
+appLogPath dir appName = dir <> "/" <> appName <> ".log"
+
+-- | Create the log directory if it is missing.
+-- Returns whether it already existed, which is what decides the wording of
+-- the startup message.
+ensureLogDir :: FilePath -> IO Bool
+ensureLogDir dir = do
+  existed <- doesDirectoryExist dir
+  createDirectoryIfMissing True dir
+  return existed
 
 -- | Calculate the difference in hours between two UTCTime values.
 hoursDiff :: UTCTime -> UTCTime -> Int

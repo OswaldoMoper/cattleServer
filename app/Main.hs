@@ -9,12 +9,20 @@ import           System.Exit                  as E
 import           System.Process
 import           Time
 
+-- | Log directory used before any configuration has been read: the sibling
+-- directory the service has always fallen back to.
+fallbackLogDir :: FilePath
+fallbackLogDir = "./../" <> defaultLogDirName
+
 main :: IO ()
 main = do
-  cattleServerDir <- recursiveDirectoryExist "./.." "cattleServer-Logs/" ""
-  case cattleServerDir of
-    True  -> writeLog ("./../cattleServer-Logs/" <> logFile) "Started" "The cattleServer service has been started correctly"
-    False -> writeLog ("./../cattleServer-Logs/" <> logFile) "Started" "The cattleServer service log folder has been created"
+  configPath <- resolveConfigPath
+  m_service  <- readJSONconfigFrom configPath
+  let logDirPath = maybe fallbackLogDir resolveLogDir m_service
+  logDirExisted <- ensureLogDir logDirPath
+  case logDirExisted of
+    True  -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service has been started correctly"
+    False -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service log folder has been created"
   recursiveBackup False
 
 recursiveBackup :: Bool -> IO ()
@@ -22,25 +30,28 @@ recursiveBackup False = do
   threadDelay (halfHour)
   recursiveBackup True
 recursiveBackup True = do
-  m_config <- readJSONconfig
+  configPath <- resolveConfigPath
+  m_config   <- readJSONconfigFrom configPath
   case m_config of
     Nothing   -> do
-      writeLog ("./../cattleServer-Logs" <> logFile) "Config error" "The cattleServer service hasn't been configurated correctly"
+      writeLog (serviceLogPath fallbackLogDir) "Config error" ("The cattleServer service hasn't been configurated correctly: " <> configPath)
       recursiveBackup False
     Just software -> do
-      recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software)
-      recursiveDeleteAppBackup (apps software) (localHost software)
+      let logDirPath = resolveLogDir software
+      _ <- ensureLogDir logDirPath
+      recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath
+      recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
       recursiveBackup False
 
-saveAppBackup :: App -> String -> Host -> IO ()
-saveAppBackup app knownHost localHost = do
+saveAppBackup :: App -> String -> Host -> FilePath -> IO ()
+saveAppBackup app knownHost localHost logDirPath = do
   current <- getCurrentTime
   let localPath = userHome localHost
       nameApp   = name (appConfig app)
       backupF   = backupFrequency (serviceConfig app)
   doBackup <- do
-    _ <- recursiveDirectoryExist localPath "/cattleServer-Logs" ""
-    lastBackup <- getLastBackup (localPath <> "/cattleServer-Logs") nameApp
+    _ <- ensureLogDir logDirPath
+    lastBackup <- getLastBackup logDirPath nameApp
     case unit backupF of
       "Hours"  -> return $ (hoursDiff  current lastBackup) > (times backupF)
       "Days"   -> return $ (daysDiff   current lastBackup) > (times backupF)
@@ -50,22 +61,22 @@ saveAppBackup app knownHost localHost = do
   case doBackup of
     True  -> do
       _ <- recursiveDirectoryExist localPath "backup" nameApp
-      saveBackup current (appConfig app) (databaseConfig app) (serviceConfig app) knownHost localHost
+      saveBackup current (appConfig app) (databaseConfig app) (serviceConfig app) knownHost localHost logDirPath
     False -> return ()
 
-recursiveSaveAppBackup :: [App] -> String -> Host -> IO ()
-recursiveSaveAppBackup [] _ _                     = return ()
-recursiveSaveAppBackup (app:apps) knownHost localHost = do
-  saveAppBackup app knownHost localHost
-  recursiveSaveAppBackup apps knownHost localHost
+recursiveSaveAppBackup :: [App] -> String -> Host -> FilePath -> IO ()
+recursiveSaveAppBackup [] _ _ _                                  = return ()
+recursiveSaveAppBackup (app:apps) knownHost localHost logDirPath = do
+  saveAppBackup app knownHost localHost logDirPath
+  recursiveSaveAppBackup apps knownHost localHost logDirPath
 
-deleteAppBackup :: App -> Host -> IO ()
-deleteAppBackup app localHost = do
+deleteAppBackup :: App -> Host -> FilePath -> IO ()
+deleteAppBackup app localHost logDirPath = do
   current <- getCurrentTime
   let localPath   = userHome localHost
       nameApp     = name (appConfig app)
       deleteF     = deleteFrequency (serviceConfig app)
-      logFilePath = localPath <> "/cattleServer-Logs/" <> nameApp  <> ".log"
+      logFilePath = appLogPath logDirPath nameApp
       timeDir     = timeToStringDir (subsNominalTime (times deleteF) (unit deleteF) current)
       currentS    = timeToStringDir current
       deleteDir   = localPath <> "/backup/" <> nameApp <> "/" <> recursiveStringDir currentS timeDir (unit deleteF) (times deleteF)
@@ -77,26 +88,26 @@ deleteAppBackup app localHost = do
       case delExit of
         E.ExitSuccess -> do
           writeLog logFilePath "Success" (deleteDir <> " deleted successfully (obsolete backup)")
-          writeLog ("./../cattleServer-Logs" <> logFile) "Success" ("The service cattleServer has successfully deleted " <> nameApp <> " obsolete backup")
-        _             -> writeLog ("./../cattleServer-Logs" <> logFile) "Error" delErr
+          writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully deleted " <> nameApp <> " obsolete backup")
+        _             -> writeLog (serviceLogPath logDirPath) "Error" delErr
 
-recursiveDeleteAppBackup :: [App] -> Host -> IO ()
-recursiveDeleteAppBackup []         _         = return ()
-recursiveDeleteAppBackup (app:apps) localHost = do
-  deleteAppBackup app localHost
-  recursiveDeleteAppBackup apps localHost
+recursiveDeleteAppBackup :: [App] -> Host -> FilePath -> IO ()
+recursiveDeleteAppBackup []         _         _          = return ()
+recursiveDeleteAppBackup (app:apps) localHost logDirPath = do
+  deleteAppBackup app localHost logDirPath
+  recursiveDeleteAppBackup apps localHost logDirPath
 
 -- | Login to the server via SSH, backs up the database and downloads the full backup locally via SCP.
 -- Write to the log file during the process.
-saveBackup :: UTCTime -> Route -> Route -> Config -> String -> Host -> IO ()
-saveBackup utc app database config knownHost localHost = do
+saveBackup :: UTCTime -> Route -> Route -> Config -> String -> Host -> FilePath -> IO ()
+saveBackup utc app database config knownHost localHost logDirPath = do
   let appName     = name app
       sqlFile     = structure database <> ".sql"
       localPath   = userHome localHost
       remotePath  = userHome (remoteHost config)
       remoteDir   = hostName (remoteHost config)
-      logFilePath = localPath <> "/cattleServer-Logs/" <> appName  <> ".log"
-  writeLog ("./../cattleServer-Logs" <> logFile) "Backup in process" ("The cattleServer service is backing up " <> appName)
+      logFilePath = appLogPath logDirPath appName
+  writeLog (serviceLogPath logDirPath) "Backup in process" ("The cattleServer service is backing up " <> appName)
   loginResponse <- loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config) logFilePath
   case loginResponse of
     Left err      -> do
@@ -127,7 +138,7 @@ saveBackup utc app database config knownHost localHost = do
               case uploadExit' of
                 E.ExitSuccess -> do
                   writeLog logFilePath "Success" ("Uploads directory downloaded successfully")
-                  writeLog ("./../cattleServer-Logs" <> logFile) "Success" ("The service cattleServer has successfully backed up " <> appName)
+                  writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
                 _             -> writeLog logFilePath "Error" uploadErr'
 
 loginToServer :: Host -> Integer -> String -> Route -> String -> IO (Either SimpleSSHError Session)
