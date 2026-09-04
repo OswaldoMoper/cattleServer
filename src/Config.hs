@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Config where
@@ -8,6 +9,7 @@ import           Data.Aeson
 import           Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy     as B
 import           Data.Maybe               (fromMaybe)
+import qualified Data.Text                as T
 import           GHC.Generics             (Generic)
 import           System.Directory         (doesFileExist)
 import           System.Environment       (getArgs, lookupEnv)
@@ -30,12 +32,47 @@ data Route = Route
 instance FromJSON Route
 instance ToJSON Route
 
+-- | What to do when the remote host is not in the @known_hosts@ file.
+--
+-- The spellings mirror OpenSSH's @StrictHostKeyChecking@. Its @no@ is
+-- deliberately not accepted: there it means "append and ignore conflicts",
+-- which is not a state a typo should be able to reach.
+data HostKeyPolicy
+  = StrictHostKey
+  -- ^ Never write to the file. An unknown host is refused.
+  | AcceptNewHostKey
+  -- ^ Trust on first use: add an unknown host, but never replace an entry
+  -- that is already there.
+  deriving (Eq, Show, Read)
+
+-- | Parsed by hand rather than derived, so that an unrecognised value is an
+-- error instead of a silent fallback. Getting this one wrong would either
+-- disable the trust the operator asked for or grant trust they did not.
+instance FromJSON HostKeyPolicy where
+  parseJSON = withText "HostKeyPolicy" $ \t ->
+    case T.toLower (T.strip t) of
+      "strict"     -> pure StrictHostKey
+      "yes"        -> pure StrictHostKey
+      "accept-new" -> pure AcceptNewHostKey
+      other        -> fail $ "expected \"strict\" or \"accept-new\", got "
+                          <> show (T.unpack other)
+
+instance ToJSON HostKeyPolicy where
+  toJSON StrictHostKey    = String "strict"
+  toJSON AcceptNewHostKey = String "accept-new"
+
 data Config = Config
-  { remoteHost      :: Host
-  , keyDirectory    :: Route
-  , portNumber      :: Integer
-  , backupFrequency :: UnitTime
-  , deleteFrequency :: UnitTime
+  { remoteHost         :: Host
+  , keyDirectory       :: Route
+  , portNumber         :: Integer
+  , backupFrequency    :: UnitTime
+  , deleteFrequency    :: UnitTime
+  , hostKeys           :: Maybe [String]
+  -- ^ Public keys of the remote host, as @known_hosts@ lines or bare
+  -- @\<type\> \<base64\>@ pairs. Installed as they are, without asking the
+  -- network what the host claims to be.
+  , hostKeyFingerprint :: Maybe String
+  -- ^ A @SHA256:@ fingerprint that a scanned key must match to be trusted.
   } deriving (Generic, Show, Read)
 
 instance FromJSON Config
@@ -51,10 +88,13 @@ instance FromJSON App
 instance ToJSON App
 
 data Service = Service
-  { localHost  :: Host
-  , knownHosts :: String
-  , logDir     :: Maybe FilePath
-  , apps       :: [App]
+  { localHost     :: Host
+  , knownHosts    :: String
+  , logDir        :: Maybe FilePath
+  , hostKeyPolicy :: Maybe HostKeyPolicy
+  -- ^ Governs the @known_hosts@ file, which is why it sits here rather than
+  -- on each application: there is one file for the whole service.
+  , apps          :: [App]
   }deriving (Generic, Show, Read)
 
 instance FromJSON Service
@@ -98,6 +138,18 @@ resolveLogDir service =
   fromMaybe
     (userHome (localHost service) <> "/" <> defaultLogDirName)
     (logDir service)
+
+-- | The host key policy in force.
+--
+-- Defaults to 'AcceptNewHostKey' so a fresh deployment can establish trust
+-- without anyone logging in by hand. Declare 'hostKeys' when the host's
+-- identity is already known, which makes 'StrictHostKey' usable.
+resolveHostKeyPolicy :: Service -> HostKeyPolicy
+resolveHostKeyPolicy = fromMaybe AcceptNewHostKey . hostKeyPolicy
+
+-- | Host keys declared for a connection, if any.
+resolveHostKeys :: Config -> [String]
+resolveHostKeys = fromMaybe [] . hostKeys
 
 readJSONconfig :: IO (Maybe Service)
 readJSONconfig = resolveConfigPath >>= readJSONconfigFrom
@@ -168,11 +220,13 @@ exampleService =
         }
       serviceconfig =
         Config
-        { remoteHost      = remote
-        , keyDirectory    = keys
-        , portNumber      = 22
-        , backupFrequency = frequency
-        , deleteFrequency = delete
+        { remoteHost         = remote
+        , keyDirectory       = keys
+        , portNumber         = 22
+        , backupFrequency    = frequency
+        , deleteFrequency    = delete
+        , hostKeys           = Nothing
+        , hostKeyFingerprint = Nothing
         }
       app =
         App
@@ -181,8 +235,9 @@ exampleService =
         , serviceConfig  = serviceconfig
         }
   in Service
-     { localHost  = local
-     , knownHosts = "/home/<user>/.ssh/known_hosts"
-     , logDir     = Nothing
-     , apps       = app : app : []
+     { localHost     = local
+     , knownHosts    = "/home/<user>/.ssh/known_hosts"
+     , logDir        = Nothing
+     , hostKeyPolicy = Just AcceptNewHostKey
+     , apps          = app : app : []
      }
