@@ -7,7 +7,9 @@ module Time where
 import           Control.Exception        (IOException, bracket, try)
 import           Control.Monad            (filterM)
 import           Data.Aeson
+import           Data.Char                (isDigit)
 import           Data.List.Extra          (dropEnd, sortOn)
+import           Data.Maybe               (catMaybes)
 import           Data.Time.Clock
 import           Data.Time.Format         (defaultTimeLocale, formatTime,
                                            parseTimeM)
@@ -15,7 +17,8 @@ import           Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
 import           GHC.Generics             (Generic)
 import           System.Directory         (createDirectoryIfMissing,
                                            doesDirectoryExist, doesFileExist,
-                                           listDirectory)
+                                           listDirectory, removeDirectory,
+                                           renameDirectory)
 import           System.Environment       (lookupEnv)
 import           System.FilePath          (dropTrailingPathSeparator,
                                            takeFileName)
@@ -95,6 +98,77 @@ mkBackupDir localPath appName utc = do
   let dir = localPath <> "/backup/" <> appName <> "/" <> backupDirName utc
   createDirectoryIfMissing True dir
   return dir
+
+-- | The nested layout's name for a backup, relative to the application root.
+parseNestedBackupName :: String -> Maybe UTCTime
+parseNestedBackupName = parseTimeM False defaultTimeLocale "%Y/%m/%d/T%H"
+
+-- | Directories under an application root whose name could be a year.
+--
+-- This is what keeps the migration cheap once it is done: nothing else is
+-- descended into, so the steady state costs one listing and stops.
+yearDirectories :: FilePath -> IO [FilePath]
+yearDirectories appRoot = do
+  exists <- doesDirectoryExist appRoot
+  case exists of
+    False -> return []
+    True  -> do
+      entries <- listDirectory appRoot
+      filterM isRealDirectory
+        [ appRoot <> "/" <> e | e <- entries, length e == 4, all isDigit e ]
+
+-- | Backups still in the layout this replaced, oldest first.
+nestedBackups :: FilePath -> IO [(UTCTime, FilePath)]
+nestedBackups appRoot = do
+  years <- yearDirectories appRoot
+  found <- concat <$> mapM (dirsAtDepth (nestedBackupDepth - 1)) years
+  let prefixLen = length appRoot + 1
+  return (sortOn fst
+    [ (t, p) | p <- found, Just t <- [parseNestedBackupName (drop prefixLen p)] ])
+
+-- | Rename every backup still in the nested layout to a flat dated name.
+--
+-- Idempotent, so it can run on every pass and needs no marker to say it has
+-- finished: once nothing is nested there is nothing left to do. Every rename
+-- stays inside the application root, so it is within one filesystem and
+-- atomic, and an interruption leaves a mixture that the next pass completes.
+migrateNestedBackups :: FilePath -> IO [(FilePath, FilePath)]
+migrateNestedBackups appRoot = do
+  nested <- nestedBackups appRoot
+  moved  <- mapM renameOne nested
+  pruneEmptyParents appRoot
+  return (catMaybes moved)
+  where
+    renameOne (t, from) = do
+      let to = appRoot <> "/" <> backupDirName t
+      clash <- doesDirectoryExist to
+      case clash of
+        True  -> return Nothing
+        False -> do
+          attempt <- try (renameDirectory from to)
+          return $ case attempt of
+            Right ()                -> Just (from, to)
+            Left (_ :: IOException) -> Nothing
+
+-- | Remove the year, month and day directories the migration emptied.
+--
+-- 'removeDirectory' refuses a directory that still holds anything, so a
+-- rename that failed can never have its data pulled out from under it.
+pruneEmptyParents :: FilePath -> IO ()
+pruneEmptyParents appRoot = do
+  years  <- yearDirectories appRoot
+  months <- concat <$> mapM (dirsAtDepth 1) years
+  days   <- concat <$> mapM (dirsAtDepth 1) months
+  mapM_ removeIfEmpty days
+  mapM_ removeIfEmpty months
+  mapM_ removeIfEmpty years
+
+removeIfEmpty :: FilePath -> IO ()
+removeIfEmpty dir = do
+  attempt <- try (removeDirectory dir)
+  return $ case attempt of
+    Right ()                -> ()
+    Left (_ :: IOException) -> ()
 
 -- | Name of the link that always points at the newest backup.
 latestLinkName :: String

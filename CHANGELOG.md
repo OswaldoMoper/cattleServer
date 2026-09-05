@@ -35,6 +35,10 @@
   `keepAtLeast`.
 * An application whose name contains a space no longer creates two
   directories.
+* Backups in the old nested layout are renamed into the new one on the first
+  pass, and the `latest` link is repointed after. Nothing has to be moved by
+  hand, and a rename that cannot be done leaves that backup where it is for
+  the next pass to retry.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

@@ -53,9 +53,43 @@ recursiveBackup waitMinutes = do
     Just software -> do
       let logDirPath = resolveLogDir software
       _ <- ensureLogDir logDirPath
+      migrateApps (apps software) (localHost software) logDirPath
       recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath (resolveHostKeyPolicy software)
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
       recursiveBackup (resolveCheckEvery software)
+
+-- | Bring every application's backups into the current layout.
+--
+-- Runs on every pass rather than only at startup: it is idempotent and cheap
+-- once there is nothing left to move, so a migration interrupted halfway is
+-- simply finished next time round, with no marker file to get out of step.
+migrateApps :: [App] -> Host -> FilePath -> IO ()
+migrateApps []         _         _          = return ()
+migrateApps (app:rest) localHost logDirPath = do
+  let nameApp     = name (appConfig app)
+      appRoot     = userHome localHost <> "/backup/" <> nameApp
+      logFilePath = appLogPath logDirPath nameApp
+  moved <- migrateNestedBackups appRoot
+  case null moved of
+    True  -> return ()
+    False -> do
+      writeLog logFilePath "Success"
+        (show (length moved) <> " backup(s) of " <> nameApp <> " renamed into the current layout")
+      repointLatest logFilePath appRoot
+  migrateApps rest localHost logDirPath
+
+-- | Point @latest@ at the newest backup there is.
+repointLatest :: FilePath -> FilePath -> IO ()
+repointLatest logFilePath appRoot = do
+  remaining <- listBackups appRoot
+  case reverse remaining of
+    []              -> return ()
+    ((_, newest):_) -> do
+      linked <- linkLatest appRoot newest
+      case linked of
+        Left err -> writeLog logFilePath "Error"
+          ("Could not point " <> latestLinkName <> " at " <> newest <> ": " <> err)
+        Right () -> return ()
 
 saveAppBackup :: App -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
 saveAppBackup app knownHost localHost logDirPath policy = do
