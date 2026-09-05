@@ -15,6 +15,8 @@ import           GHC.Generics             (Generic)
 import           System.Directory         (createDirectoryIfMissing,
                                            doesDirectoryExist, doesFileExist,
                                            listDirectory)
+import           System.FilePath          (dropTrailingPathSeparator,
+                                           takeFileName)
 import           System.IO
 import           System.Posix.Files       (createSymbolicLink,
                                            getSymbolicLinkStatus, isDirectory,
@@ -49,6 +51,18 @@ backupDepth = 4
 -- | Name of the link that always points at the newest backup.
 latestLinkName :: String
 latestLinkName = "latest"
+
+-- | Local name for the copy of the remote uploads directory.
+--
+-- The basename of whatever the configuration points at, so @\/loads@ arrives
+-- as @loads@ rather than under a name compiled into the program. Falls back
+-- to what that name used to be unconditionally, for a path with no basename
+-- of its own.
+uploadDirName :: FilePath -> String
+uploadDirName remotePath =
+  case takeFileName (dropTrailingPathSeparator remotePath) of
+    "" -> "upload"
+    n  -> n
 
 -- | Real directories exactly @depth@ levels below @root@.
 --

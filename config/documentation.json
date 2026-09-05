@@ -13,7 +13,7 @@
         {
             "appConfig": {
                 "name": "Add here the name of your application, this will be used to create the logfile, sqlfile and backup directory. Renaming it makes cattleServer lose track of the last backup and take one immediately",
-                "structure": "Add here the /upload directory of your application in the remote host"
+                "structure": "Add here the uploads directory of your application in the remote host. It arrives in the backup under its own basename, so /loads lands as loads"
             },
             "databaseConfig": {
                 "name": "Add here the username to use in postgresql",

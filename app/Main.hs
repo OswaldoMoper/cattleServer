@@ -152,7 +152,7 @@ saveBackup utc app database config knownHost localHost logDirPath policy = do
               case sqlExit' of
                 E.ExitSuccess -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
                 _             -> writeLog logFilePath "Error" sqlErr'
-              (uploadExit', _, uploadErr') <- databaseBackupLocally (remoteHost config) (portNumber config) knownHost (keyDirectory config) (structure app) (dir <> "/upload")
+              (uploadExit', _, uploadErr') <- databaseBackupLocally (remoteHost config) (portNumber config) knownHost (keyDirectory config) (structure app) (dir <> "/" <> uploadDirName (structure app))
               case uploadExit' of
                 E.ExitSuccess -> do
                   writeLog logFilePath "Success" ("Uploads directory downloaded successfully")

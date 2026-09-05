@@ -86,10 +86,15 @@ Setting `startupDelay` to zero makes the first pass happen at startup. On a mach
 
 Backups land in a dated tree under `<localHost.userHome>/backup/<app>/`:
 
+```text
+backup/prueba/2026/09/05/T07/                     the backup taken at 07:00
+backup/prueba/2026/09/05/T07/yesod-project.sql    the database dump
+backup/prueba/2026/09/05/T07/upload/              the uploads directory
+backup/prueba/latest -> .../T07                   a link to the newest one
 ```
-backup/prueba/2026/09/05/T07/     the backup taken at 07:00 on 2026-09-05
-backup/prueba/latest -> .../T07   a link to the newest one
-```
+
+The uploads directory keeps the name it has on the remote, so an
+`appConfig.structure` of `/loads` arrives as `loads`.
 
 The directory name is the date, and `latest` is a path that does not change between backups, so `readlink backup/prueba/latest` answers both "where is the current backup" and "when was it taken". The link is only moved once a backup has finished, so it never points at a half written one.
 

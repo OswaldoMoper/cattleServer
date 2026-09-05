@@ -22,6 +22,9 @@
   week of failing backups would have left nothing at all.
 * A `latest` link in each application's backup directory points at the newest
   backup, and is only moved once one has finished.
+* The uploads directory arrives under the name it has on the remote instead of
+  always being called `upload`. A restore that reaches for `latest/upload`
+  needs the real name now, unless that is what it was called anyway.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 
