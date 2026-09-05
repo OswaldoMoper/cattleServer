@@ -125,6 +125,30 @@ let
           Neither ever replaces an entry that is already there.
         '';
       };
+      checkEvery = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = ''
+          Minutes between two passes over the applications.
+
+          This bounds how late a backup can be rather than how often one
+          happens: each application has its own `backupFrequency`, and a pass
+          only acts on the ones that are due. A pass that finds nothing due
+          costs one log file read, so checking often is cheap.
+        '';
+      };
+      startupDelay = mkOption {
+        type = types.ints.unsigned;
+        default = 30;
+        description = ''
+          Minutes to wait before the first pass.
+
+          Zero makes the first pass happen at startup. On a machine with no
+          log yet that means backing up immediately, since nothing records a
+          previous backup -- worth knowing before pairing it with
+          `Restart = "always"`.
+        '';
+      };
       apps = mkOption {
         type = types.listOf (types.submodule appOpts);
         default = [ ];

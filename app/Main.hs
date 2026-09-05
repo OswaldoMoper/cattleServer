@@ -27,25 +27,29 @@ main = do
   case logDirExisted of
     True  -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service has been started correctly"
     False -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service log folder has been created"
-  recursiveBackup False
+  recursiveBackup (maybe defaultStartupDelay resolveStartupDelay m_service)
 
-recursiveBackup :: Bool -> IO ()
-recursiveBackup False = do
-  threadDelay (halfHour)
-  recursiveBackup True
-recursiveBackup True = do
+-- | Wait, then make one pass over every application, forever.
+--
+-- The wait comes first, so the argument is the startup delay on the way in
+-- and the configured interval on the way round. The configuration is re-read
+-- on each pass, which is what lets an edit take effect without a restart --
+-- including an edit to the interval itself.
+recursiveBackup :: Int -> IO ()
+recursiveBackup waitMinutes = do
+  threadDelay (minutesToMicros waitMinutes)
   configPath <- resolveConfigPath
   m_config   <- readJSONconfigFrom configPath
   case m_config of
     Nothing   -> do
       writeLog (serviceLogPath fallbackLogDir) "Config error" ("The cattleServer service hasn't been configurated correctly: " <> configPath)
-      recursiveBackup False
+      recursiveBackup defaultCheckEvery
     Just software -> do
       let logDirPath = resolveLogDir software
       _ <- ensureLogDir logDirPath
       recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath (resolveHostKeyPolicy software)
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
-      recursiveBackup False
+      recursiveBackup (resolveCheckEvery software)
 
 saveAppBackup :: App -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
 saveAppBackup app knownHost localHost logDirPath policy = do

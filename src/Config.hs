@@ -94,6 +94,10 @@ data Service = Service
   , hostKeyPolicy :: Maybe HostKeyPolicy
   -- ^ Governs the @known_hosts@ file, which is why it sits here rather than
   -- on each application: there is one file for the whole service.
+  , checkEvery    :: Maybe Int
+  -- ^ Minutes between two passes over the applications.
+  , startupDelay  :: Maybe Int
+  -- ^ Minutes to wait before the first pass.
   , apps          :: [App]
   }deriving (Generic, Show, Read)
 
@@ -150,6 +154,30 @@ resolveHostKeyPolicy = fromMaybe AcceptNewHostKey . hostKeyPolicy
 -- | Host keys declared for a connection, if any.
 resolveHostKeys :: Config -> [String]
 resolveHostKeys = fromMaybe [] . hostKeys
+
+-- | Minutes between two passes over the applications.
+--
+-- This is what bounds how /late/ a backup can be: an application due at some
+-- point in its window is picked up on the next pass, so the interval is the
+-- worst case delay. A pass only reads a log file when nothing is due, so
+-- checking often is cheap. Clamped to a minute to rule out a busy loop.
+resolveCheckEvery :: Service -> Int
+resolveCheckEvery = max 1 . fromMaybe defaultCheckEvery . checkEvery
+
+-- | Minutes to wait before the first pass.
+--
+-- Zero means the first pass happens at startup. Note what that implies on a
+-- machine with no log yet: 'getLastBackup' reports the last backup as long
+-- ago, so every application is due, and the service backs up as soon as it
+-- starts.
+resolveStartupDelay :: Service -> Int
+resolveStartupDelay = max 0 . fromMaybe defaultStartupDelay . startupDelay
+
+defaultCheckEvery :: Int
+defaultCheckEvery = 30
+
+defaultStartupDelay :: Int
+defaultStartupDelay = 30
 
 readJSONconfig :: IO (Maybe Service)
 readJSONconfig = resolveConfigPath >>= readJSONconfigFrom
@@ -239,5 +267,7 @@ exampleService =
      , knownHosts    = "/home/<user>/.ssh/known_hosts"
      , logDir        = Nothing
      , hostKeyPolicy = Just AcceptNewHostKey
+     , checkEvery    = Just defaultCheckEvery
+     , startupDelay  = Just defaultStartupDelay
      , apps          = app : app : []
      }

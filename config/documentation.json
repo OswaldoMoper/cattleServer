@@ -7,6 +7,8 @@
     "knownHosts": "Add here the path to your knownHosts file. cattleServer maintains it: see hostKeyPolicy",
     "logDir": "Optional. Where the service log and the per-application logs go. Defaults to <localHost.userHome>/cattleServer-Logs. The service log is also how the scheduler remembers the last backup, so moving it makes cattleServer take one immediately",
     "hostKeyPolicy": "Optional, one of 'accept-new' (default) or 'strict'. accept-new runs ssh-keyscan on a host that is not in knownHosts yet and adds what it answers; strict never writes to the file. Neither ever replaces an entry that is already there, so a host whose key changed always fails",
+    "checkEvery": "Optional, minutes between two passes over the apps (default 30). This bounds how late a backup can be, not how often one happens: each app has its own backupFrequency, and a pass only acts on the ones that are due. A pass that finds nothing due costs one log file read",
+    "startupDelay": "Optional, minutes to wait before the first pass (default 30). Zero makes the first pass happen at startup, which on a machine with no log yet means backing up immediately, because nothing records a previous backup",
     "apps": [
         {
             "appConfig": {

@@ -7,6 +7,8 @@
     "knownHosts": "/home/<user>/.ssh/known_hosts",
     "logDir": "/home/<user>/cattleServer-Logs",
     "hostKeyPolicy": "accept-new",
+    "checkEvery": 30,
+    "startupDelay": 30,
     "apps": [
         {
             "appConfig": {

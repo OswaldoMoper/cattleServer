@@ -31,8 +31,9 @@ nominalWeek = nominalDay*7
 nominalMonth :: NominalDiffTime
 nominalMonth = nominalDay*30
 
-halfHour :: Int
-halfHour = 1800000000
+-- | Minutes as the microseconds 'Control.Concurrent.threadDelay' wants.
+minutesToMicros :: Int -> Int
+minutesToMicros minutes = minutes * 60 * 1000000
 
 logFile :: String
 logFile = "/cattleServer.log"

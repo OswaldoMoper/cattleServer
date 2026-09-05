@@ -73,7 +73,14 @@ Two fields decide where the service keeps its state:
 
 Note that `appConfig.name` names the log file, the backup directory and that success marker, so renaming an application has the same effect.
 
-**The first backup happens half an hour after the service starts**, not immediately. It is not stuck.
+## Scheduling
+
+Each application has its own `backupFrequency`, and two settings decide when the service looks:
+
+- `checkEvery`, minutes between passes, 30 by default. This bounds how *late* a backup can be, not how often one happens: a pass only acts on the applications that are due, and one that finds nothing due costs a single log file read.
+- `startupDelay`, minutes before the first pass, also 30. **So by default nothing happens for the first half hour after the service starts.** It is not stuck.
+
+Setting `startupDelay` to zero makes the first pass happen at startup. On a machine with no log yet that means backing up immediately, since nothing records a previous backup -- worth knowing before pairing it with `Restart = "always"`.
 
 ## Trusting the remote host
 

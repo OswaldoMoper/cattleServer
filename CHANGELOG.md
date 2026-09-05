@@ -15,6 +15,8 @@
 * `scp` is resolved on `PATH` instead of an absolute NixOS-only path, and uses
   the remote user, port and `known_hosts` file from the configuration.
 * A missing `openssh` fails one backup instead of stopping the service.
+* `checkEvery` and `startupDelay` replace the half hour that was compiled in.
+  Both default to it, so nothing changes until they are set.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 
