@@ -38,6 +38,7 @@
                     "userName": "Add here the Username of the remote device"
                 },
                 "portNumber": "Add here the port will be used to connect to the remote host (def 22)",
+                "keepAtLeast": "Optional, how many backups must survive whatever deleteFrequency would remove (default 2). Deletion goes by date and runs whether or not the backup before it succeeded, so on its own it empties the directory after a week of failing backups. Two means a corrupt newest backup still leaves one behind it. Zero restores deletion that only looks at the calendar",
                 "hostKeys": "Optional. The remote host's public keys, as knownHosts lines or bare '<type> <base64>' pairs. Declared keys are installed as they are, without asking the network, which is what makes hostKeyPolicy 'strict' usable",
                 "hostKeyFingerprint": "Optional, 'SHA256:...'. A scanned key has to match it to be trusted. Only consulted when the host is scanned, not when hostKeys are declared"
             }

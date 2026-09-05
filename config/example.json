@@ -32,6 +32,7 @@
                     "name": "exampleKey-ed25519",
                     "structure": "/home/<user>/.ssh"
                 },
+                "keepAtLeast": 2,
                 "portNumber": 22,
                 "remoteHost": {
                     "hostName": "0.0.0.0",
@@ -63,6 +64,7 @@
                     "name": "exampleKey-ed25519",
                     "structure": "/home/<user>/.ssh"
                 },
+                "keepAtLeast": 3,
                 "portNumber": 2222,
                 "remoteHost": {
                     "hostName": "0.0.0.0",

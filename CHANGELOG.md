@@ -17,6 +17,11 @@
 * A missing `openssh` fails one backup instead of stopping the service.
 * `checkEvery` and `startupDelay` replace the half hour that was compiled in.
   Both default to it, so nothing changes until they are set.
+* `keepAtLeast`, 2 by default, is a floor under `deleteFrequency`. Deletion
+  went by date and ran whether or not the backup before it succeeded, so a
+  week of failing backups would have left nothing at all.
+* A `latest` link in each application's backup directory points at the newest
+  backup, and is only moved once one has finished.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

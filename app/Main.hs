@@ -2,6 +2,7 @@ module Main where
 
 import           Config
 import           Control.Concurrent           (threadDelay)
+import           Data.List                    (isPrefixOf)
 import           Data.Time.Clock
 import           KnownHosts                   (Request (..), ensureKnownHost,
                                                mayProceed, outcomeDescription,
@@ -87,17 +88,27 @@ deleteAppBackup app localHost logDirPath = do
       logFilePath = appLogPath logDirPath nameApp
       timeDir     = timeToStringDir (subsNominalTime (times deleteF) (unit deleteF) current)
       currentS    = timeToStringDir current
-      deleteDir   = localPath <> "/backup/" <> nameApp <> "/" <> recursiveStringDir currentS timeDir (unit deleteF) (times deleteF)
+      appRoot     = localPath <> "/backup/" <> nameApp
+      deleteDir   = appRoot <> "/" <> recursiveStringDir currentS timeDir (unit deleteF) (times deleteF)
   delete <- doesDirectoryExist deleteDir
   case delete of
     False -> return ()
     True  -> do
-      (delExit, _, delErr) <- readProcessWithExitCode "rm" ["-r", deleteDir] []
-      case delExit of
-        E.ExitSuccess -> do
-          writeLog logFilePath "Success" (deleteDir <> " deleted successfully (obsolete backup)")
-          writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully deleted " <> nameApp <> " obsolete backup")
-        _             -> writeLog (serviceLogPath logDirPath) "Error" delErr
+      existing <- dirsAtDepth backupDepth appRoot
+      let doomed    = filter (\p -> p == deleteDir || (deleteDir <> "/") `isPrefixOf` p) existing
+          surviving = length existing - length doomed
+          floor'    = resolveKeepAtLeast (serviceConfig app)
+      case surviving < floor' of
+        True  -> writeLog logFilePath "Skipped"
+          (deleteDir <> " not deleted: it would leave " <> show surviving
+            <> " backup(s), fewer than the " <> show floor' <> " to keep")
+        False -> do
+          (delExit, _, delErr) <- readProcessWithExitCode "rm" ["-r", deleteDir] []
+          case delExit of
+            E.ExitSuccess -> do
+              writeLog logFilePath "Success" (deleteDir <> " deleted successfully (obsolete backup)")
+              writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully deleted " <> nameApp <> " obsolete backup")
+            _             -> writeLog (serviceLogPath logDirPath) "Error" delErr
 
 recursiveDeleteAppBackup :: [App] -> Host -> FilePath -> IO ()
 recursiveDeleteAppBackup []         _         _          = return ()
@@ -145,6 +156,10 @@ saveBackup utc app database config knownHost localHost logDirPath policy = do
               case uploadExit' of
                 E.ExitSuccess -> do
                   writeLog logFilePath "Success" ("Uploads directory downloaded successfully")
+                  linked <- linkLatest (localPath <> "/backup/" <> appName) dir
+                  case linked of
+                    Left err -> writeLog logFilePath "Error" ("Could not point " <> latestLinkName <> " at " <> dir <> ": " <> err)
+                    Right () -> writeLog logFilePath "Success" (latestLinkName <> " now points at " <> dir)
                   writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
                 _             -> writeLog logFilePath "Error" uploadErr'
 

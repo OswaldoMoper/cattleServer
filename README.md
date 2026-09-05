@@ -82,6 +82,21 @@ Each application has its own `backupFrequency`, and two settings decide when the
 
 Setting `startupDelay` to zero makes the first pass happen at startup. On a machine with no log yet that means backing up immediately, since nothing records a previous backup -- worth knowing before pairing it with `Restart = "always"`.
 
+## What a backup looks like, and what survives
+
+Backups land in a dated tree under `<localHost.userHome>/backup/<app>/`:
+
+```
+backup/prueba/2026/09/05/T07/     the backup taken at 07:00 on 2026-09-05
+backup/prueba/latest -> .../T07   a link to the newest one
+```
+
+The directory name is the date, and `latest` is a path that does not change between backups, so `readlink backup/prueba/latest` answers both "where is the current backup" and "when was it taken". The link is only moved once a backup has finished, so it never points at a half written one.
+
+`deleteFrequency` removes old backups by date. On its own that is a hazard rather than a policy: it runs whether or not the backup before it succeeded, so a week of failing backups would see the last good one deleted on schedule and leave nothing at all. `keepAtLeast`, 2 by default, is the floor that stops it -- enough that a corrupt newest backup still has one behind it. Set it to zero to go back to deleting purely by the calendar.
+
+Note that a backup is a full copy: the uploads directory is fetched in its entirety every time, with no incremental transfer.
+
 ## Trusting the remote host
 
 libssh2 refuses a host that is not in the `known_hosts` file, so this used to need somebody to `ssh` in by hand once per machine. The service does it itself now, in one of three ways.

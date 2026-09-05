@@ -60,6 +60,21 @@ let
         example = "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU";
         description = "A scanned key must match this fingerprint to be trusted.";
       };
+      keepAtLeast = mkOption {
+        type = types.ints.unsigned;
+        default = 2;
+        description = ''
+          How many backups have to survive whatever `deleteFrequency` would
+          remove.
+
+          Deletion goes by date and runs whether or not the backup before it
+          succeeded, so on its own it will empty the directory after a week of
+          failing backups. This is the floor that stops it. Two by default, so
+          that a corrupt newest backup still leaves one behind it.
+
+          Zero restores deletion that only looks at the calendar.
+        '';
+      };
     };
   };
 

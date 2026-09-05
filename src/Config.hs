@@ -73,6 +73,8 @@ data Config = Config
   -- network what the host claims to be.
   , hostKeyFingerprint :: Maybe String
   -- ^ A @SHA256:@ fingerprint that a scanned key must match to be trusted.
+  , keepAtLeast        :: Maybe Int
+  -- ^ How many backups must survive whatever 'deleteFrequency' would remove.
   } deriving (Generic, Show, Read)
 
 instance FromJSON Config
@@ -154,6 +156,18 @@ resolveHostKeyPolicy = fromMaybe AcceptNewHostKey . hostKeyPolicy
 -- | Host keys declared for a connection, if any.
 resolveHostKeys :: Config -> [String]
 resolveHostKeys = fromMaybe [] . hostKeys
+
+-- | How many backups have to survive a deletion.
+--
+-- 'deleteFrequency' removes by date and runs whether or not the backup that
+-- preceded it succeeded, so on its own it will happily empty the directory
+-- while backups have been failing for a week. This is the floor that stops
+-- that: two, so that a corrupt newest backup still leaves one behind it.
+resolveKeepAtLeast :: Config -> Int
+resolveKeepAtLeast = max 0 . fromMaybe defaultKeepAtLeast . keepAtLeast
+
+defaultKeepAtLeast :: Int
+defaultKeepAtLeast = 2
 
 -- | Minutes between two passes over the applications.
 --
@@ -255,6 +269,7 @@ exampleService =
         , deleteFrequency    = delete
         , hostKeys           = Nothing
         , hostKeyFingerprint = Nothing
+        , keepAtLeast        = Just defaultKeepAtLeast
         }
       app =
         App

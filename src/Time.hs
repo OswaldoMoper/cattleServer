@@ -1,8 +1,11 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Time where
 
 -- import           Config
+import           Control.Exception        (IOException, try)
+import           Control.Monad            (filterM)
 import           Data.Aeson
 import           Data.List.Extra          (breakOn, dropEnd, dropWhileEnd,
                                            replace, takeWhileEnd)
@@ -10,8 +13,12 @@ import           Data.Time.Clock
 import           Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
 import           GHC.Generics             (Generic)
 import           System.Directory         (createDirectoryIfMissing,
-                                           doesDirectoryExist, doesFileExist)
+                                           doesDirectoryExist, doesFileExist,
+                                           listDirectory)
 import           System.IO
+import           System.Posix.Files       (createSymbolicLink,
+                                           getSymbolicLinkStatus, isDirectory,
+                                           isSymbolicLink, removeLink)
 import           System.Process
 
 data UnitTime = UnitTime
@@ -34,6 +41,65 @@ nominalMonth = nominalDay*30
 -- | Minutes as the microseconds 'Control.Concurrent.threadDelay' wants.
 minutesToMicros :: Int -> Int
 minutesToMicros minutes = minutes * 60 * 1000000
+
+-- | How deep one backup sits under an application's directory: @YYYY\/MM\/DD\/THH@.
+backupDepth :: Int
+backupDepth = 4
+
+-- | Name of the link that always points at the newest backup.
+latestLinkName :: String
+latestLinkName = "latest"
+
+-- | Real directories exactly @depth@ levels below @root@.
+--
+-- Symlinks do not count and are not followed, so the @latest@ link is neither
+-- mistaken for a backup of its own nor used to reach one twice.
+dirsAtDepth :: Int -> FilePath -> IO [FilePath]
+dirsAtDepth depth root
+  | depth <= 0 = return [root]
+  | otherwise  = do
+      exists <- doesDirectoryExist root
+      case exists of
+        False -> return []
+        True  -> do
+          entries  <- listDirectory root
+          children <- filterM isRealDirectory (map ((root <> "/") <>) entries)
+          concat <$> mapM (dirsAtDepth (depth - 1)) children
+
+-- | Whether the path is a directory in its own right, rather than a symlink
+-- pointing at one.
+isRealDirectory :: FilePath -> IO Bool
+isRealDirectory path = do
+  attempt <- try (getSymbolicLinkStatus path)
+  return $ case attempt of
+    Right status            -> isDirectory status
+    Left (_ :: IOException) -> False
+
+-- | Point @latest@ at a backup, replacing whatever it pointed at before.
+--
+-- Gives a path that does not change between backups, while the directory it
+-- resolves to still carries the date. Refuses to touch anything that is not
+-- already a symlink, so a directory of that name is never destroyed.
+linkLatest :: FilePath -> FilePath -> IO (Either String ())
+linkLatest root target = do
+  let link = root <> "/" <> latestLinkName
+  replaceable <- isExistingSymlink link
+  attempt <- try $ do
+    case replaceable of
+      True  -> removeLink link
+      False -> return ()
+    createSymbolicLink target link
+  return $ case attempt of
+    Right ()                -> Right ()
+    Left (e :: IOException) -> Left (show e)
+
+-- | Whether the path is a symlink, and so ours to replace.
+isExistingSymlink :: FilePath -> IO Bool
+isExistingSymlink path = do
+  attempt <- try (getSymbolicLinkStatus path)
+  return $ case attempt of
+    Right status            -> isSymbolicLink status
+    Left (_ :: IOException) -> False
 
 logFile :: String
 logFile = "/cattleServer.log"
