@@ -73,9 +73,7 @@ saveAppBackup app knownHost localHost logDirPath policy = do
       "Months" -> return $ (monthsDiff current lastBackup) > (times backupF)
       _        -> return $ (hoursDiff  current lastBackup) > 8
   case doBackup of
-    True  -> do
-      _ <- recursiveDirectoryExist localPath "backup" nameApp
-      saveBackup current (appConfig app) (databaseConfig app) (serviceConfig app) knownHost localHost logDirPath policy
+    True  -> saveBackup current (appConfig app) (databaseConfig app) (serviceConfig app) knownHost localHost logDirPath policy
     False -> return ()
 
 recursiveSaveAppBackup :: [App] -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
@@ -84,36 +82,45 @@ recursiveSaveAppBackup (app:apps) knownHost localHost logDirPath policy = do
   saveAppBackup app knownHost localHost logDirPath policy
   recursiveSaveAppBackup apps knownHost localHost logDirPath policy
 
+-- | Delete the backups that are older than 'deleteFrequency', oldest first,
+-- while leaving at least 'keepAtLeast' of them.
+--
+-- The layout this replaced could only name the one directory that fell exactly
+-- on the cutoff, so a day the service happened to be down was never revisited
+-- and its backups stayed forever. Sorting and taking a prefix reaches all of
+-- them, which also means the first pass after this lands clears whatever
+-- backlog that left behind.
 deleteAppBackup :: App -> Host -> FilePath -> IO ()
 deleteAppBackup app localHost logDirPath = do
   current <- getCurrentTime
-  let localPath   = userHome localHost
-      nameApp     = name (appConfig app)
+  let nameApp     = name (appConfig app)
       deleteF     = deleteFrequency (serviceConfig app)
       logFilePath = appLogPath logDirPath nameApp
-      timeDir     = timeToStringDir (subsNominalTime (times deleteF) (unit deleteF) current)
-      currentS    = timeToStringDir current
-      appRoot     = localPath <> "/backup/" <> nameApp
-      deleteDir   = appRoot <> "/" <> recursiveStringDir currentS timeDir (unit deleteF) (times deleteF)
-  delete <- doesDirectoryExist deleteDir
-  case delete of
+      appRoot     = userHome localHost <> "/backup/" <> nameApp
+      cutoff      = subsNominalTime (times deleteF) (unit deleteF) current
+      floor'      = resolveKeepAtLeast (serviceConfig app)
+  existing <- listBackups appRoot
+  let expired  = takeWhile ((< cutoff) . fst) existing
+      spare    = length existing - floor'
+      doomed   = take (max 0 spare) expired
+      withheld = length expired - length doomed
+  mapM_ (removeBackup logFilePath (serviceLogPath logDirPath) nameApp) doomed
+  case withheld > 0 of
+    True  -> writeLog logFilePath "Skipped"
+      (show withheld <> " backup(s) of " <> nameApp <> " older than the cutoff kept: "
+        <> "deleting them would leave fewer than the " <> show floor' <> " to keep")
     False -> return ()
-    True  -> do
-      existing <- dirsAtDepth backupDepth appRoot
-      let doomed    = filter (\p -> p == deleteDir || (deleteDir <> "/") `isPrefixOf` p) existing
-          surviving = length existing - length doomed
-          floor'    = resolveKeepAtLeast (serviceConfig app)
-      case surviving < floor' of
-        True  -> writeLog logFilePath "Skipped"
-          (deleteDir <> " not deleted: it would leave " <> show surviving
-            <> " backup(s), fewer than the " <> show floor' <> " to keep")
-        False -> do
-          (delExit, _, delErr) <- readProcessWithExitCode "rm" ["-r", deleteDir] []
-          case delExit of
-            E.ExitSuccess -> do
-              writeLog logFilePath "Success" (deleteDir <> " deleted successfully (obsolete backup)")
-              writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully deleted " <> nameApp <> " obsolete backup")
-            _             -> writeLog (serviceLogPath logDirPath) "Error" delErr
+
+-- | Delete one backup, through 'runTool' so a missing @rm@ fails this deletion
+-- rather than the daemon.
+removeBackup :: FilePath -> FilePath -> String -> (UTCTime, FilePath) -> IO ()
+removeBackup logFilePath serviceLog nameApp (_, dir) = do
+  (delExit, _, delErr) <- runTool "rm" ["-r", dir] []
+  case delExit of
+    E.ExitSuccess -> do
+      writeLog logFilePath "Success" (dir <> " deleted successfully (obsolete backup)")
+      writeLog serviceLog  "Success" ("The service cattleServer has successfully deleted " <> nameApp <> " obsolete backup")
+    _             -> writeLog serviceLog "Error" delErr
 
 recursiveDeleteAppBackup :: [App] -> Host -> FilePath -> IO ()
 recursiveDeleteAppBackup []         _         _          = return ()
@@ -151,8 +158,7 @@ saveBackup utc app database config knownHost localHost logDirPath policy = do
               writeLog logFilePath "Error" (show err)
             Right () -> do
               writeLog logFilePath "Success" "SSH connection closed"
-              backupDir <- mkDateDir localPath ("backup/" <> appName ) utc
-              let dir = localPath <> "/" <> backupDir
+              dir <- mkBackupDir localPath appName utc
               (sqlExit', _, sqlErr') <- databaseBackupLocally (remoteHost config) (portNumber config) knownHost (keyDirectory config) (remotePath <> "/backup/" <> sqlFile) (dir <> "/" <> sqlFile)
               case sqlExit' of
                 E.ExitSuccess -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")

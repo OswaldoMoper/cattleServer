@@ -25,6 +25,16 @@
 * The uploads directory arrives under the name it has on the remote instead of
   always being called `upload`. A restore that reaches for `latest/upload`
   needs the real name now, unless that is what it was called anyway.
+* Every line also goes to standard output, so `journalctl -u cattleServer`
+  shows the service. The log file is unchanged.
+* A backup is one directory named for its timestamp, `2026-09-05T07`, rather
+  than four nested ones. Deletion follows: it reaches every backup older than
+  `deleteFrequency` instead of only the one that fell on the cutoff, so a day
+  the service was down no longer leaves backups behind forever. **The first
+  pass after upgrading clears whatever backlog that left**, down to
+  `keepAtLeast`.
+* An application whose name contains a space no longer creates two
+  directories.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

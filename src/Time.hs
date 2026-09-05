@@ -7,8 +7,7 @@ module Time where
 import           Control.Exception        (IOException, bracket, try)
 import           Control.Monad            (filterM)
 import           Data.Aeson
-import           Data.List.Extra          (breakOn, dropEnd, dropWhileEnd,
-                                           replace, sortOn, takeWhileEnd)
+import           Data.List.Extra          (dropEnd, sortOn)
 import           Data.Time.Clock
 import           Data.Time.Format         (defaultTimeLocale, formatTime,
                                            parseTimeM)
@@ -24,7 +23,6 @@ import           System.IO
 import           System.Posix.Files       (createSymbolicLink,
                                            getSymbolicLinkStatus, isDirectory,
                                            isSymbolicLink, removeLink)
-import           System.Process
 
 data UnitTime = UnitTime
   { unit  :: String
@@ -47,9 +45,11 @@ nominalMonth = nominalDay*30
 minutesToMicros :: Int -> Int
 minutesToMicros minutes = minutes * 60 * 1000000
 
--- | How deep one backup sits under an application's directory: @YYYY\/MM\/DD\/THH@.
-backupDepth :: Int
-backupDepth = 4
+-- | How deep a backup sat under an application's directory in the layout this
+-- replaced: @YYYY\/MM\/DD\/THH@. Kept because finding those is what the
+-- migration needs.
+nestedBackupDepth :: Int
+nestedBackupDepth = 4
 
 -- | Directory name for a backup taken at a given time.
 --
@@ -215,50 +215,6 @@ subsNominalTime factor u utc =
 
 multiply :: NominalDiffTime -> Int -> NominalDiffTime
 multiply time factor = fromRational (toRational time * toRational factor)
-
-timeToStringDir :: UTCTime -> String
-timeToStringDir utc = do
-  let (timeText, _)  = breakOn ":" (replace "T" "/T" (iso8601Show utc))
-  replace "-" "/" timeText
-
-dropTailDir :: String -> String
-dropTailDir = (dropEnd 1) . (dropWhileEnd (/= '/'))
-
-takeTailInt :: String -> Int
-takeTailInt = read . (takeWhileEnd (/= '/')) . dropTailDir
-
-recursiveStringDir :: String -> String -> String -> Int -> String
-recursiveStringDir current deleteDir "Days" number = do
-  let currentDay = takeTailInt current
-  case currentDay == number of
-    True  -> recursiveStringDir (dropTailDir current) (dropTailDir deleteDir) "Months" 1
-    False -> dropTailDir deleteDir
-recursiveStringDir current deleteDir "Months" number = do
-  let currentMonth = takeTailInt current
-  case currentMonth == number of
-    True  -> recursiveStringDir (dropTailDir current) (dropTailDir deleteDir) "Years" 1
-    False -> dropTailDir deleteDir
-recursiveStringDir _ deleteDir _ _ = dropTailDir deleteDir
-
-mkDateDir :: String -> String -> UTCTime -> IO String
-mkDateDir localPath backupApp utc = do
-  let backupDir      = backupApp <> "/" <> timeToStringDir utc
-      (dir, dirTail) = breakOn "/" backupDir
-  _ <- recursiveDirectoryExist localPath dir ( drop 1 dirTail )
-  return (dir <> dirTail)
-
-recursiveDirectoryExist :: String -> String -> String -> IO Bool
-recursiveDirectoryExist localPath directory "" = do
-  dirExistance <- doesDirectoryExist (localPath <> "/" <> directory)
-  case dirExistance of
-    False -> do
-      callCommand $ "mkdir " <> localPath <> "/" <> directory
-      -- writeLog "Success" (directory <> " created successfully")
-      return False
-    True -> return True
-recursiveDirectoryExist localPath directory tailS = do
-  _ <- recursiveDirectoryExist localPath directory ""
-  recursiveDirectoryExist localPath ( directory <> "/" <> takeWhile (/= '/') tailS ) (drop 1 $ dropWhile (/= '/') tailS)
 
 getLastBackup :: String -> String -> IO UTCTime
 getLastBackup localPath appName = do

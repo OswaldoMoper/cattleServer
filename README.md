@@ -87,18 +87,20 @@ Setting `startupDelay` to zero makes the first pass happen at startup. On a mach
 Backups land in a dated tree under `<localHost.userHome>/backup/<app>/`:
 
 ```text
-backup/prueba/2026/09/05/T07/                     the backup taken at 07:00
-backup/prueba/2026/09/05/T07/yesod-project.sql    the database dump
-backup/prueba/2026/09/05/T07/upload/              the uploads directory
-backup/prueba/latest -> .../T07                   a link to the newest one
+backup/prueba/2026-09-05T07/                    the backup taken at 07:00
+backup/prueba/2026-09-05T07/yesod-project.sql   the database dump
+backup/prueba/2026-09-05T07/upload/             the uploads directory
+backup/prueba/latest -> 2026-09-05T07           a link to the newest one
 ```
+
+The name is a truncated ISO 8601 timestamp, so `ls` lists backups in the order they were taken.
 
 The uploads directory keeps the name it has on the remote, so an
 `appConfig.structure` of `/loads` arrives as `loads`.
 
 The directory name is the date, and `latest` is a path that does not change between backups, so `readlink backup/prueba/latest` answers both "where is the current backup" and "when was it taken". The link is only moved once a backup has finished, so it never points at a half written one.
 
-`deleteFrequency` removes old backups by date. On its own that is a hazard rather than a policy: it runs whether or not the backup before it succeeded, so a week of failing backups would see the last good one deleted on schedule and leave nothing at all. `keepAtLeast`, 2 by default, is the floor that stops it -- enough that a corrupt newest backup still has one behind it. Set it to zero to go back to deleting purely by the calendar.
+`deleteFrequency` removes every backup older than it, oldest first. On its own that is a hazard rather than a policy: it runs whether or not the backup before it succeeded, so a week of failing backups would see the last good one deleted on schedule and leave nothing at all. `keepAtLeast`, 2 by default, is the floor that stops it -- enough that a corrupt newest backup still has one behind it. Set it to zero to go back to deleting purely by the calendar.
 
 Note that a backup is a full copy: the uploads directory is fetched in its entirety every time, with no incremental transfer.
 

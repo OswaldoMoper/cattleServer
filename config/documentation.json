@@ -25,7 +25,7 @@
                     "times": "Add here how often (def 8 )"
                 },
                 "deleteFrequency": {
-                    "unit": "Add here the time unit of the recursive backup, (default = Days). Means 10 Days",
+                    "unit": "Add here the time unit for how long a backup is kept, (default = Days). Means 10 Days. Every backup older than this is removed, oldest first, subject to keepAtLeast",
                     "times": "Add here how often (def 10 )"
                 },
                 "keyDirectory": {
