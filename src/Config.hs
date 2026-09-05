@@ -75,6 +75,9 @@ data Config = Config
   -- ^ A @SHA256:@ fingerprint that a scanned key must match to be trusted.
   , keepAtLeast        :: Maybe Int
   -- ^ How many backups must survive whatever 'deleteFrequency' would remove.
+  , remoteRsyncPath    :: Maybe String
+  -- ^ Where @rsync@ lives on the remote, for when it is not on the @PATH@ a
+  -- non-interactive @ssh host command@ gets -- which on NixOS is a short one.
   } deriving (Generic, Show, Read)
 
 instance FromJSON Config
@@ -100,6 +103,8 @@ data Service = Service
   -- ^ Minutes between two passes over the applications.
   , startupDelay  :: Maybe Int
   -- ^ Minutes to wait before the first pass.
+  , progressEvery :: Maybe Int
+  -- ^ Seconds between two progress lines while a transfer runs.
   , apps          :: [App]
   }deriving (Generic, Show, Read)
 
@@ -187,6 +192,16 @@ resolveCheckEvery = max 1 . fromMaybe defaultCheckEvery . checkEvery
 resolveStartupDelay :: Service -> Int
 resolveStartupDelay = max 0 . fromMaybe defaultStartupDelay . startupDelay
 
+-- | Seconds between two progress lines while a transfer is running.
+--
+-- rsync reports several times a second; this is what turns that into
+-- something a person can read without it burying everything else.
+resolveProgressEvery :: Service -> Int
+resolveProgressEvery = max 1 . fromMaybe defaultProgressEvery . progressEvery
+
+defaultProgressEvery :: Int
+defaultProgressEvery = 30
+
 defaultCheckEvery :: Int
 defaultCheckEvery = 30
 
@@ -270,6 +285,7 @@ exampleService =
         , hostKeys           = Nothing
         , hostKeyFingerprint = Nothing
         , keepAtLeast        = Just defaultKeepAtLeast
+        , remoteRsyncPath    = Nothing
         }
       app =
         App
@@ -284,5 +300,6 @@ exampleService =
      , hostKeyPolicy = Just AcceptNewHostKey
      , checkEvery    = Just defaultCheckEvery
      , startupDelay  = Just defaultStartupDelay
+     , progressEvery = Just defaultProgressEvery
      , apps          = app : app : []
      }

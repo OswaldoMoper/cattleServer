@@ -60,6 +60,18 @@ let
         example = "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU";
         description = "A scanned key must match this fingerprint to be trusted.";
       };
+      remoteRsyncPath = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "/run/current-system/sw/bin/rsync";
+        description = ''
+          Where rsync lives on the remote host.
+
+          Only needed when it is not on the PATH that a non-interactive
+          `ssh host command` gets, which on NixOS is a short one. Setting it
+          here avoids having to edit a shell profile on the other machine.
+        '';
+      };
       keepAtLeast = mkOption {
         type = types.ints.unsigned;
         default = 2;
@@ -162,6 +174,17 @@ let
           log yet that means backing up immediately, since nothing records a
           previous backup -- worth knowing before pairing it with
           `Restart = "always"`.
+        '';
+      };
+      progressEvery = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = ''
+          Seconds between two progress lines while a transfer is running.
+
+          rsync reports several times a second, so this is what keeps a large
+          transfer to a handful of lines rather than thousands. The line that
+          says the transfer finished is always reported.
         '';
       };
       apps = mkOption {

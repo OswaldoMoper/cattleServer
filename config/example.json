@@ -7,6 +7,7 @@
     "knownHosts": "/home/<user>/.ssh/known_hosts",
     "logDir": "/home/<user>/cattleServer-Logs",
     "hostKeyPolicy": "accept-new",
+    "progressEvery": 30,
     "checkEvery": 30,
     "startupDelay": 30,
     "apps": [
@@ -65,6 +66,7 @@
                     "structure": "/home/<user>/.ssh"
                 },
                 "keepAtLeast": 3,
+                "remoteRsyncPath": "/run/current-system/sw/bin/rsync",
                 "portNumber": 2222,
                 "remoteHost": {
                     "hostName": "0.0.0.0",
