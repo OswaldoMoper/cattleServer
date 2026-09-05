@@ -8,8 +8,10 @@ import           Control.Exception        (IOException, bracket, try)
 import           Control.Monad            (filterM)
 import           Data.Aeson
 import           Data.List.Extra          (breakOn, dropEnd, dropWhileEnd,
-                                           replace, takeWhileEnd)
+                                           replace, sortOn, takeWhileEnd)
 import           Data.Time.Clock
+import           Data.Time.Format         (defaultTimeLocale, formatTime,
+                                           parseTimeM)
 import           Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
 import           GHC.Generics             (Generic)
 import           System.Directory         (createDirectoryIfMissing,
@@ -48,6 +50,51 @@ minutesToMicros minutes = minutes * 60 * 1000000
 -- | How deep one backup sits under an application's directory: @YYYY\/MM\/DD\/THH@.
 backupDepth :: Int
 backupDepth = 4
+
+-- | Directory name for a backup taken at a given time.
+--
+-- A truncated ISO 8601 timestamp. Every field is fixed width and zero padded,
+-- so sorting the names sorts them by date, and there is no character that
+-- needs quoting in a shell word or an rsync argument.
+--
+-- The hour is the finest grain 'backupFrequency' offers, so two backups can
+-- never contend for one name -- and a retry within the same hour repairs the
+-- directory it failed in rather than leaving a half written one behind.
+backupDirFormat :: String
+backupDirFormat = "%Y-%m-%dT%H"
+
+backupDirName :: UTCTime -> String
+backupDirName = formatTime defaultTimeLocale backupDirFormat
+
+-- | The time a directory name stands for, if it is one of ours.
+--
+-- Total, where the nested layout's 'takeTailInt' was a partial 'read': a name
+-- that is not a backup -- @latest@, a leftover, anything else -- is 'Nothing'
+-- rather than an exception that takes the daemon down.
+parseBackupDirName :: String -> Maybe UTCTime
+parseBackupDirName = parseTimeM False defaultTimeLocale backupDirFormat
+
+-- | Every backup under an application's directory, oldest first.
+--
+-- Only real directories whose name parses as a time count, so symlinks and
+-- anything unrecognised are skipped rather than mistaken for a backup.
+listBackups :: FilePath -> IO [(UTCTime, FilePath)]
+listBackups root = do
+  exists <- doesDirectoryExist root
+  case exists of
+    False -> return []
+    True  -> do
+      entries <- listDirectory root
+      let dated = [ (t, e) | e <- entries, Just t <- [parseBackupDirName e] ]
+      real <- filterM (\(_, e) -> isRealDirectory (root <> "/" <> e)) dated
+      return (sortOn fst [ (t, root <> "/" <> e) | (t, e) <- real ])
+
+-- | Create the directory a backup taken at this time belongs in.
+mkBackupDir :: FilePath -> String -> UTCTime -> IO FilePath
+mkBackupDir localPath appName utc = do
+  let dir = localPath <> "/backup/" <> appName <> "/" <> backupDirName utc
+  createDirectoryIfMissing True dir
+  return dir
 
 -- | Name of the link that always points at the newest backup.
 latestLinkName :: String
