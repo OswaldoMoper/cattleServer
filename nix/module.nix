@@ -293,13 +293,17 @@ in
         # default under stateDir, but any of them can be pointed elsewhere.
         # None can be derived when the configuration is a credential, since
         # the module cannot read it -- hence extraReadWritePaths.
+        # The "-" prefix marks a path systemd may skip when it does not exist.
+        # The service creates its own log directory on first run, and a path
+        # listed here that is missing fails the unit at step NAMESPACE before
+        # anything runs -- which reads as a restart loop with no explanation.
         ReadWritePaths = lib.unique
           ([ cfg.stateDir ] ++ cfg.extraReadWritePaths
-           ++ lib.optionals (!usesCredential) [
+           ++ map (p: "-" + p) (lib.optionals (!usesCredential) [
                 cfg.settings.localHost.userHome
                 cfg.settings.logDir
                 (builtins.dirOf cfg.settings.knownHosts)
-              ]);
+              ]));
 
         NoNewPrivileges         = true;
         PrivateTmp              = true;
