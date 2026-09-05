@@ -39,6 +39,11 @@
   pass, and the `latest` link is repointed after. Nothing has to be moved by
   hand, and a rename that cannot be done leaves that backup where it is for
   the next pass to retry.
+* Backups are pulled with `rsync --link-dest` rather than `scp`, so only what
+  changed is transferred and the rest is hardlinked against the previous
+  backup. **rsync is now required on both machines.** `du` on one backup
+  counts blocks it shares with its neighbours; `du` over the whole
+  application directory is still right.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

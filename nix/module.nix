@@ -327,7 +327,7 @@ in
       wantedBy    = [ "multi-user.target" ];
       after       = [ "network-online.target" ];
       wants       = [ "network-online.target" ];
-      path        = [ pkgs.openssh pkgs.coreutils ];
+      path        = [ pkgs.openssh pkgs.rsync pkgs.coreutils ];
 
       environment.CATTLESERVER_CONFIG = configPath;
 

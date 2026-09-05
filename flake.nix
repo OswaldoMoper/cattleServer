@@ -33,7 +33,7 @@
             ''
               mkdir -p $out/bin
               makeWrapper ${exe}/bin/cattleServer $out/bin/cattleServer \
-                --prefix PATH : ${final.lib.makeBinPath [ final.openssh final.coreutils ]}
+                --prefix PATH : ${final.lib.makeBinPath [ final.openssh final.rsync final.coreutils ]}
             '';
       };
     in

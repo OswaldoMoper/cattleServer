@@ -99,6 +99,16 @@ mkBackupDir localPath appName utc = do
   createDirectoryIfMissing True dir
   return dir
 
+-- | The backups whose files a new one may be hardlinked against.
+--
+-- The two newest that are not the one being written -- two rather than one so
+-- that a backup interrupted halfway, which leaves a directory that is real
+-- but incomplete, does not force the next one to copy everything again.
+linkDestinations :: FilePath -> FilePath -> IO [FilePath]
+linkDestinations appRoot current = do
+  existing <- listBackups appRoot
+  return (take 2 [ p | (_, p) <- reverse existing, p /= current ])
+
 -- | The nested layout's name for a backup, relative to the application root.
 parseNestedBackupName :: String -> Maybe UTCTime
 parseNestedBackupName = parseTimeM False defaultTimeLocale "%Y/%m/%d/T%H"

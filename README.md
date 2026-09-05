@@ -102,7 +102,16 @@ The directory name is the date, and `latest` is a path that does not change betw
 
 `deleteFrequency` removes every backup older than it, oldest first. On its own that is a hazard rather than a policy: it runs whether or not the backup before it succeeded, so a week of failing backups would see the last good one deleted on schedule and leave nothing at all. `keepAtLeast`, 2 by default, is the floor that stops it -- enough that a corrupt newest backup still has one behind it. Set it to zero to go back to deleting purely by the calendar.
 
-Note that a backup is a full copy: the uploads directory is fetched in its entirety every time, with no incremental transfer.
+Backups are incremental. rsync transfers only what changed since the last one, and hardlinks the rest against the previous backup, so each directory reads as a complete tree while costing only the difference. Three generations of a tree with one changed file take the space of one tree plus that file, not three trees.
+
+Two things follow from the hardlinks, and neither is obvious:
+
+- **`du` on a single backup no longer answers "how much does this cost".** It counts blocks that backup shares with its neighbours. `du` over the whole application directory is still right, because it counts each block once.
+- **Editing a file inside a backup changes it in every generation that shares it.** The service never does this -- rsync writes a temporary file and renames it, so it never modifies a shared inode -- but a person poking around can.
+
+What does *not* change: every file is a complete, ordinary file. `cat`, `cp`, `tar`, or Windows over a network share all see the whole thing. Copying a backup elsewhere with `rsync -a` gives full copies at the destination; `rsync -aH` keeps them shared; `tar` records the links and recreates them.
+
+rsync must be installed on **both** machines.
 
 ## Trusting the remote host
 

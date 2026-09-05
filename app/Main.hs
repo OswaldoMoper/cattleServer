@@ -2,13 +2,14 @@ module Main where
 
 import           Config
 import           Control.Concurrent           (threadDelay)
-import           Data.List                    (isPrefixOf)
+import           Data.Char                    (isSpace)
 import           Data.Time.Clock
 import           KnownHosts                   (Request (..), ensureKnownHost,
                                                mayProceed, outcomeDescription,
                                                outcomeTag)
 import           Network.SSH.Client.SimpleSSH as SSH
-import           Proc                         (runTool, shellQuote)
+import           Proc                         (runTool, runToolStreaming,
+                                               shellQuote)
 import           System.Directory             (doesDirectoryExist)
 import           System.Exit                  as E
 import           System.IO                    (BufferMode (LineBuffering),
@@ -192,21 +193,32 @@ saveBackup utc app database config knownHost localHost logDirPath policy = do
               writeLog logFilePath "Error" (show err)
             Right () -> do
               writeLog logFilePath "Success" "SSH connection closed"
-              dir <- mkBackupDir localPath appName utc
-              (sqlExit', _, sqlErr') <- databaseBackupLocally (remoteHost config) (portNumber config) knownHost (keyDirectory config) (remotePath <> "/backup/" <> sqlFile) (dir <> "/" <> sqlFile)
-              case sqlExit' of
-                E.ExitSuccess -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
-                _             -> writeLog logFilePath "Error" sqlErr'
-              (uploadExit', _, uploadErr') <- databaseBackupLocally (remoteHost config) (portNumber config) knownHost (keyDirectory config) (structure app) (dir <> "/" <> uploadDirName (structure app))
-              case uploadExit' of
-                E.ExitSuccess -> do
-                  writeLog logFilePath "Success" ("Uploads directory downloaded successfully")
-                  linked <- linkLatest (localPath <> "/backup/" <> appName) dir
-                  case linked of
-                    Left err -> writeLog logFilePath "Error" ("Could not point " <> latestLinkName <> " at " <> dir <> ": " <> err)
-                    Right () -> writeLog logFilePath "Success" (latestLinkName <> " now points at " <> dir)
-                  writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
-                _             -> writeLog logFilePath "Error" uploadErr'
+              case sshCommand (portNumber config) knownHost (keyDirectory config) of
+                Left err  -> writeLog logFilePath "Error" err
+                Right ssh -> do
+                  let appRoot = localPath <> "/backup/" <> appName
+                  dir       <- mkBackupDir localPath appName utc
+                  linkDests <- linkDestinations appRoot dir
+                  let xfer = Transfer { xferRemote    = remoteHost config
+                                      , xferSsh       = ssh
+                                      , xferRsyncPath = remoteRsyncPath config
+                                      , xferLinkDests = linkDests
+                                      , xferInto      = dir
+                                      }
+                  (sqlExit, sqlErr) <- rsyncDown xfer True (remotePath <> "/backup/" <> sqlFile) (const (return ()))
+                  case sqlExit of
+                    E.ExitSuccess -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
+                    _             -> writeLog logFilePath "Error" sqlErr
+                  (uploadExit, uploadErr) <- rsyncDown xfer False (structure app) (const (return ()))
+                  case uploadExit of
+                    E.ExitSuccess -> do
+                      writeLog logFilePath "Success" (uploadDirName (structure app) <> " downloaded successfully")
+                      linked <- linkLatest appRoot dir
+                      case linked of
+                        Left err -> writeLog logFilePath "Error" ("Could not point " <> latestLinkName <> " at " <> dir <> ": " <> err)
+                        Right () -> writeLog logFilePath "Success" (latestLinkName <> " now points at " <> dir)
+                      writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
+                    _             -> writeLog logFilePath "Error" uploadErr
 
 -- | Establish that the remote host is trusted, then open a session to it.
 --
@@ -272,24 +284,72 @@ databaseBackupInServer session database remote = do
       <> " > "             <> shellQuote (remoteDir <> "/" <> dbStruct <> ".sql")
   return response
 
--- | Copy a remote path to a local one with @scp@.
+-- | Everything a transfer needs that does not change between the two copies
+-- one backup makes.
+data Transfer = Transfer
+  { xferRemote    :: Host
+  , xferSsh       :: String
+  , xferRsyncPath :: Maybe String
+  , xferLinkDests :: [FilePath]
+  , xferInto      :: FilePath
+  }
+
+-- | The @ssh@ command line rsync is told to use.
 --
--- @scp@ is resolved on @PATH@, which the Nix wrapper and the systemd unit are
--- responsible for populating. It uses the remote user and the port from the
--- configuration, and the same @known_hosts@ file as libssh2 -- otherwise it
--- would consult the invoking user's @~/.ssh@ and disagree about which hosts
--- are trusted.
-databaseBackupLocally :: Host -> Integer -> FilePath -> Route -> String -> String
-                      -> IO (ExitCode, String, String)
-databaseBackupLocally remote port knownHost keys remotePath localPath =
-  runTool "scp"
-    [ "-i", structure keys <> "/" <> name keys
-    , "-P", show port
-    , "-o", "IdentitiesOnly=yes"
-    , "-o", "BatchMode=yes"
-    , "-o", "StrictHostKeyChecking=yes"
-    , "-o", "UserKnownHostsFile=" <> knownHost
-    , "-r"
-    , userName remote <> "@" <> hostName remote <> ":" <> remotePath
-    , localPath
-    ] []
+-- rsync splits this on whitespace and gives no way to quote, where @scp@ took
+-- the same values as separate arguments. Refuse rather than emit a command
+-- line that means something other than what the configuration says. Every
+-- option value here is free of whitespace by construction, so only the two
+-- paths need checking.
+sshCommand :: Integer -> FilePath -> Route -> Either String String
+sshCommand port knownHost keys
+  | any hasSpace [privateKey, knownHost] =
+      Left ("rsync cannot be given a path containing whitespace: "
+             <> unwords (filter hasSpace [privateKey, knownHost]))
+  | otherwise = Right (unwords
+      [ "ssh", "-i", privateKey, "-p", show port
+      , "-o", "IdentitiesOnly=yes"
+      , "-o", "BatchMode=yes"
+      , "-o", "StrictHostKeyChecking=yes"
+      , "-o", "UserKnownHostsFile=" <> knownHost
+      , "-o", "ConnectTimeout=30"
+      ])
+  where
+    privateKey = structure keys <> "/" <> name keys
+    hasSpace   = any isSpace
+
+-- | Pull a remote path into the backup directory with rsync.
+--
+-- Unchanged files are hardlinked against the previous backups rather than
+-- copied, so each backup reads as a complete tree while costing only what
+-- changed since the last one.
+--
+-- Deliberately not @-a@: that pulls in @-o@ and @-g@, which need @chown@,
+-- which the unit's system call filter denies -- rsync would exit 23 on every
+-- run while appearing to have copied everything. Not @-p@ either: @scp@
+-- applied the local umask, so backups are private, and preserving the
+-- remote's modes would quietly make them world readable.
+--
+-- @-t@ is not optional. Without it mtimes are not preserved, every file looks
+-- changed on the next run, and @--link-dest@ never links anything -- which
+-- shows up only as the disk filling faster than it should.
+rsyncDown :: Transfer -> Bool -> String -> (String -> IO ()) -> IO (ExitCode, String)
+rsyncDown xfer compress remotePath onRecord =
+  runToolStreaming "rsync" (rsyncArgs xfer compress remotePath) onRecord
+
+rsyncArgs :: Transfer -> Bool -> String -> [String]
+rsyncArgs xfer compress remotePath =
+  [ "--recursive", "--links", "--times"
+  , "--delete"
+  , "--no-inc-recursive"
+  , "--info=progress2", "--outbuf=N", "--no-human-readable"
+  , "--stats"
+  , "--timeout=1800"
+  ]
+  ++ concat [ ["--link-dest", d] | d <- xferLinkDests xfer ]
+  ++ [ "--compress" | compress ]
+  ++ concat [ ["--rsync-path", p] | Just p <- [xferRsyncPath xfer] ]
+  ++ [ "-e", xferSsh xfer
+     , userName (xferRemote xfer) <> "@" <> hostName (xferRemote xfer) <> ":" <> remotePath
+     , xferInto xfer <> "/"
+     ]
