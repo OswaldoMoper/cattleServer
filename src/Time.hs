@@ -4,7 +4,7 @@
 module Time where
 
 -- import           Config
-import           Control.Exception        (IOException, try)
+import           Control.Exception        (IOException, bracket, try)
 import           Control.Monad            (filterM)
 import           Data.Aeson
 import           Data.List.Extra          (breakOn, dropEnd, dropWhileEnd,
@@ -15,6 +15,7 @@ import           GHC.Generics             (Generic)
 import           System.Directory         (createDirectoryIfMissing,
                                            doesDirectoryExist, doesFileExist,
                                            listDirectory)
+import           System.Environment       (lookupEnv)
 import           System.FilePath          (dropTrailingPathSeparator,
                                            takeFileName)
 import           System.IO
@@ -236,10 +237,48 @@ searchLastBackup (line:lineS) appName = do
       iso8601ParseM (dropEnd 2 timetext)
     _       -> searchLastBackup lineS appName
 
--- | Write a message to the log file.
+-- | Write a message to the log file, and to standard output for the journal.
+--
+-- Both, not one or the other. The file is not only a log: 'getLastBackup'
+-- reads its own success markers back out of it to decide when the next backup
+-- is due, so the shape of those lines is load-bearing and the journal's
+-- priority prefix goes on the copy systemd reads, never on the copy the
+-- service reads.
 writeLog :: String -> String -> String -> IO ()
 writeLog logFilePath message description = do
-  logs <- openFile logFilePath AppendMode
   utcTime <- getCurrentTime
-  hPutStr logs (iso8601Show utcTime <> ": { Message: " <> message <> ", Description: " <> description <> " }\n")
-  hClose logs
+  let line = iso8601Show utcTime <> ": { Message: " <> message
+               <> ", Description: " <> description <> " }"
+  bracket (openFile logFilePath AppendMode) hClose $ \logs -> do
+    hSetEncoding logs utf8
+    hPutStrLn logs line
+  prefix <- journalPrefix message
+  putStrLn (prefix <> message <> ": " <> description)
+
+-- | The @\<N\>@ that systemd reads as a syslog priority and strips, so that
+-- entries reach the journal at their real level instead of all being "info".
+--
+-- Nothing else understands it, so it is only added when systemd says it owns
+-- the stream. Running the service by hand prints plain lines.
+journalPrefix :: String -> IO String
+journalPrefix message = do
+  m_stream <- lookupEnv "JOURNAL_STREAM"
+  return $ case m_stream of
+    Nothing -> ""
+    Just _  -> "<" <> show (syslogPriority message) <> ">"
+
+-- | Syslog priority for a message tag: 3 err, 4 warning, 5 notice, 6 info.
+--
+-- An unrecognised tag is info rather than nothing, so a tag added later is
+-- visible instead of being swallowed.
+syslogPriority :: String -> Int
+syslogPriority message
+  | message `elem` errors   = 3
+  | message `elem` warnings = 4
+  | message `elem` notices  = 5
+  | otherwise               = 6
+  where
+    errors   = [ "Error", "Config error", "Session Error", "Session Auth Error"
+               , "Known host error", "Known host mismatch" ]
+    warnings = [ "Skipped" ]
+    notices  = [ "Started", "Known host added" ]

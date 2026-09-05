@@ -11,6 +11,9 @@ import           Network.SSH.Client.SimpleSSH as SSH
 import           Proc                         (runTool, shellQuote)
 import           System.Directory             (doesDirectoryExist)
 import           System.Exit                  as E
+import           System.IO                    (BufferMode (LineBuffering),
+                                               hSetBuffering, hSetEncoding,
+                                               stdout, utf8)
 import           System.Process
 import           Time
 
@@ -21,6 +24,8 @@ fallbackLogDir = "./../" <> defaultLogDirName
 
 main :: IO ()
 main = do
+  hSetBuffering stdout LineBuffering
+  hSetEncoding  stdout utf8
   configPath <- resolveConfigPath
   m_service  <- readJSONconfigFrom configPath
   let logDirPath = maybe fallbackLogDir resolveLogDir m_service
