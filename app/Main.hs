@@ -194,17 +194,22 @@ loginToTrustedServer remote port knownHost keys logFilePath = do
 
 -- | Dump the database on the remote host.
 --
+-- The destination directory is created first: the redirection cannot create
+-- it, so without this the first backup against a remote fails and the fix is
+-- a manual mkdir over ssh. It is the one thing the service could not set up
+-- for itself.
+--
 -- The command runs through a remote shell, so every value taken from the
 -- configuration is quoted rather than interpolated bare.
 databaseBackupInServer :: Session -> Route -> Host -> SimpleSSH Result
 databaseBackupInServer session database remote = do
-  let dbName     = name database
-      dbStruct   = structure database
-      remoteHome = userHome remote
+  let dbStruct  = structure database
+      remoteDir = userHome remote <> "/backup"
   response <- execCommand session $
-    "pg_dump -U " <> shellQuote dbName
-      <> " "      <> shellQuote dbStruct
-      <> " > "    <> shellQuote (remoteHome <> "/backup/" <> dbStruct <> ".sql")
+    "mkdir -p "     <> shellQuote remoteDir
+      <> " && pg_dump -U " <> shellQuote (name database)
+      <> " "               <> shellQuote dbStruct
+      <> " > "             <> shellQuote (remoteDir <> "/" <> dbStruct <> ".sql")
   return response
 
 -- | Copy a remote path to a local one with @scp@.
