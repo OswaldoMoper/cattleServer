@@ -6,6 +6,7 @@ dependencies:
   - aeson-pretty
   - base
   - bytestring
+  - cryptohash-sha256
   - directory
   - extra
   - filepath

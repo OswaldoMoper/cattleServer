@@ -105,6 +105,9 @@ data Service = Service
   -- ^ Minutes to wait before the first pass.
   , progressEvery :: Maybe Int
   -- ^ Seconds between two progress lines while a transfer runs.
+  , verifyEvery   :: Maybe Int
+  -- ^ Hours between re-reading a backup and checking it against its own
+  -- manifest. Absent means never.
   , apps          :: [App]
   }deriving (Generic, Show, Read)
 
@@ -301,5 +304,6 @@ exampleService =
      , checkEvery    = Just defaultCheckEvery
      , startupDelay  = Just defaultStartupDelay
      , progressEvery = Just defaultProgressEvery
+     , verifyEvery   = Nothing
      , apps          = app : app : []
      }

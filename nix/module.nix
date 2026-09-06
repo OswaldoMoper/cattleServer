@@ -187,6 +187,25 @@ let
           says the transfer finished is always reported.
         '';
       };
+      verifyEvery = mkOption {
+        type = types.nullOr types.ints.positive;
+        default = null;
+        example = 168;
+        description = ''
+          Hours between re-reading one backup and checking it against the
+          manifest written when it was made. Null never does.
+
+          This is the only thing that turns "it was written correctly" into
+          "it is still correct": a disk can hand back a byte other than the
+          one it was given, and nothing else here would notice until someone
+          tried to restore.
+
+          Which backup is chosen by its manifest's modification time, and
+          checking touches it, so the least recently checked one is always
+          next and they rotate on their own. It costs reading a whole backup,
+          which is why it is off unless asked for.
+        '';
+      };
       apps = mkOption {
         type = types.listOf (types.submodule appOpts);
         default = [ ];

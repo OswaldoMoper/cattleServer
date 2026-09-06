@@ -10,6 +10,7 @@
     "checkEvery": "Optional, minutes between two passes over the apps (default 30). This bounds how late a backup can be, not how often one happens: each app has its own backupFrequency, and a pass only acts on the ones that are due. A pass that finds nothing due costs one log file read",
     "startupDelay": "Optional, minutes to wait before the first pass (default 30). Zero makes the first pass happen at startup, which on a machine with no log yet means backing up immediately, because nothing records a previous backup",
     "progressEvery": "Optional, seconds between two progress lines while a transfer is running (default 30). rsync reports several times a second, so this keeps a large transfer to a handful of lines. The line saying the transfer finished is always reported",
+    "verifyEvery": "Optional, hours between re-reading one backup and checking it against the manifest written when it was made. Absent never does. This is what turns 'it was written correctly' into 'it is still correct'; it costs reading a whole backup, so it is off unless asked for",
     "apps": [
         {
             "appConfig": {

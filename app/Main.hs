@@ -1,14 +1,20 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Main where
 
 import           Config
 import           Control.Concurrent           (threadDelay)
+import           Control.Exception            (IOException, try)
 import           Data.Char                    (isSpace)
 import           Data.IORef                   (modifyIORef', newIORef,
                                                readIORef)
+import           Data.List                    (intercalate, sortOn)
 import           Data.Time.Clock
 import           KnownHosts                   (Request (..), ensureKnownHost,
                                                mayProceed, outcomeDescription,
                                                outcomeTag)
+import           Manifest                     (manifestName, verifyManifest,
+                                               writeManifest)
 import           Network.SSH.Client.SimpleSSH as SSH
 import           Proc                         (runTool, runToolStreaming,
                                                shellQuote)
@@ -16,6 +22,8 @@ import           Progress                     (parseProgress, progressComplete,
                                                renderProgress, statsWorthKeeping,
                                                throttled)
 import           System.Exit                  as E
+import           System.Directory             (getModificationTime,
+                                               setModificationTime)
 import           System.IO                    (BufferMode (LineBuffering),
                                                hSetBuffering, hSetEncoding,
                                                stdout, utf8)
@@ -60,6 +68,7 @@ recursiveBackup waitMinutes = do
       migrateApps (apps software) (localHost software) logDirPath
       recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath (resolveHostKeyPolicy software) (resolveProgressEvery software)
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
+      verifyApps (apps software) (localHost software) logDirPath (verifyEvery software)
       recursiveBackup (resolveCheckEvery software)
 
 -- | Bring every application's backups into the current layout.
@@ -94,6 +103,68 @@ repointLatest logFilePath appRoot = do
         Left err -> writeLog logFilePath "Error"
           ("Could not point " <> latestLinkName <> " at " <> newest <> ": " <> err)
         Right () -> return ()
+
+-- | Check one backup per application against its manifest, when one is due.
+--
+-- Which backup is chosen by its manifest's own modification time, and
+-- verifying touches that file, so the least recently checked one is always
+-- next. The rotation keeps no state of its own: the filesystem already
+-- records everything it needs.
+--
+-- This is the only thing that turns "it was written correctly" into "it is
+-- still correct". A disk can hand back a byte other than the one it was
+-- given, and nothing else here would ever notice.
+verifyApps :: [App] -> Host -> FilePath -> Maybe Int -> IO ()
+verifyApps _       _         _          Nothing      = return ()
+verifyApps theApps localHost logDirPath (Just hours) = mapM_ one theApps
+  where
+    one theApp = do
+      let nameApp     = name (appConfig theApp)
+          appRoot     = userHome localHost <> "/backup/" <> nameApp
+          logFilePath = appLogPath logDirPath nameApp
+      backups <- listBackups appRoot
+      stalest <- leastRecentlyChecked [ p | (_, p) <- backups ]
+      now     <- getCurrentTime
+      case stalest of
+        Nothing -> return ()
+        Just (checkedAt, dir)
+          | hoursDiff now checkedAt < hours -> return ()
+          | otherwise                       -> verifyOne logFilePath dir
+
+    verifyOne logFilePath dir = do
+      outcome <- verifyManifest dir
+      touched <- try' (getCurrentTime >>= setModificationTime (dir <> "/" <> manifestName))
+      case touched of
+        Left err -> writeLog logFilePath "Error" ("could not touch the manifest in " <> dir <> ": " <> err)
+        Right () -> return ()
+      case outcome of
+        Left err -> writeLog logFilePath "Error" ("could not verify " <> dir <> ": " <> err)
+        Right (checked, []) -> writeLog logFilePath "Success"
+          (show checked <> " file(s) in " <> dir <> " still match their manifest")
+        Right (checked, bad) -> writeLog logFilePath "Error"
+          (show (length bad) <> " of " <> show checked <> " file(s) in " <> dir
+            <> " no longer match their manifest: " <> intercalate ", " (take 5 bad))
+
+-- | The backup whose manifest was checked longest ago, if any has one.
+leastRecentlyChecked :: [FilePath] -> IO (Maybe (UTCTime, FilePath))
+leastRecentlyChecked dirs = do
+  stamped <- mapM stamp dirs
+  return $ case sortOn fst [ (t, d) | Just (t, d) <- stamped ] of
+    []      -> Nothing
+    (oldest:_) -> Just oldest
+  where
+    stamp dir = do
+      attempt <- try' (getModificationTime (dir <> "/" <> manifestName))
+      return $ case attempt of
+        Right t -> Just (t, dir)
+        Left _  -> Nothing
+
+try' :: IO a -> IO (Either String a)
+try' action = do
+  attempt <- try action
+  return $ case attempt of
+    Right a                 -> Right a
+    Left (e :: IOException) -> Left (show e)
 
 saveAppBackup :: App -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO ()
 saveAppBackup app knownHost localHost logDirPath policy progressSecs = do
@@ -242,6 +313,10 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
                             <> ": the database dump did not arrive complete, so "
                             <> latestLinkName <> " still points at the previous one")
                         True  -> do
+                          manifested <- writeManifest dir
+                          case manifested of
+                            Left err -> writeLog logFilePath "Error" ("could not record a manifest for " <> dir <> ": " <> err)
+                            Right n  -> writeLog logFilePath "Success" (show n <> " file(s) recorded in " <> dir <> "/" <> manifestName)
                           linked <- linkLatest appRoot dir
                           case linked of
                             Left err -> writeLog logFilePath "Error" ("Could not point " <> latestLinkName <> " at " <> dir <> ": " <> err)
