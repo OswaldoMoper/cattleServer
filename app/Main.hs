@@ -218,19 +218,35 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
                                       , xferInto      = dir
                                       }
                   (sqlExit, sqlErr) <- transferWith logFilePath progressSecs xfer True (remotePath <> "/backup/" <> sqlFile)
-                  case rsyncSucceeded sqlExit of
-                    True  -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
-                    False -> writeLog logFilePath "Error" (rsyncDiagnosis sqlExit sqlErr)
+                  dumpOk <- case rsyncSucceeded sqlExit of
+                    False -> do
+                      writeLog logFilePath "Error" (rsyncDiagnosis sqlExit sqlErr)
+                      return False
+                    True  -> do
+                      complete <- dumpLooksComplete (dir <> "/" <> sqlFile)
+                      case complete of
+                        Right () -> do
+                          writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
+                          return True
+                        Left err -> do
+                          writeLog logFilePath "Error" (sqlFile <> " arrived incomplete: " <> err)
+                          return False
                   (uploadExit, uploadErr) <- transferWith logFilePath progressSecs xfer False (structure app)
                   case rsyncSucceeded uploadExit of
+                    False -> writeLog logFilePath "Error" (rsyncDiagnosis uploadExit uploadErr)
                     True  -> do
                       writeLog logFilePath "Success" (uploadDirName (structure app) <> " downloaded successfully")
-                      linked <- linkLatest appRoot dir
-                      case linked of
-                        Left err -> writeLog logFilePath "Error" ("Could not point " <> latestLinkName <> " at " <> dir <> ": " <> err)
-                        Right () -> writeLog logFilePath "Success" (latestLinkName <> " now points at " <> dir)
-                      writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
-                    False -> writeLog logFilePath "Error" (rsyncDiagnosis uploadExit uploadErr)
+                      case dumpOk of
+                        False -> writeLog logFilePath "Skipped"
+                          ("not recording a backup of " <> appName
+                            <> ": the database dump did not arrive complete, so "
+                            <> latestLinkName <> " still points at the previous one")
+                        True  -> do
+                          linked <- linkLatest appRoot dir
+                          case linked of
+                            Left err -> writeLog logFilePath "Error" ("Could not point " <> latestLinkName <> " at " <> dir <> ": " <> err)
+                            Right () -> writeLog logFilePath "Success" (latestLinkName <> " now points at " <> dir)
+                          writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
 
 -- | Establish that the remote host is trusted, then open a session to it.
 --

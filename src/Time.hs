@@ -7,8 +7,10 @@ module Time where
 import           Control.Exception        (IOException, bracket, try)
 import           Control.Monad            (filterM)
 import           Data.Aeson
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Char8    as BC
 import           Data.Char                (isDigit)
-import           Data.List.Extra          (dropEnd, sortOn)
+import           Data.List.Extra          (dropEnd, isInfixOf, sortOn)
 import           Data.Maybe               (catMaybes)
 import           Data.Time.Clock
 import           Data.Time.Format         (defaultTimeLocale, formatTime,
@@ -179,6 +181,38 @@ removeIfEmpty dir = do
   return $ case attempt of
     Right ()                -> ()
     Left (_ :: IOException) -> ()
+
+-- | The line @pg_dump@ writes once it has finished a plain SQL dump.
+dumpCompleteMarker :: String
+dumpCompleteMarker = "PostgreSQL database dump complete"
+
+-- | How much of the end of a dump to read looking for that marker.
+--
+-- Generous on purpose: the marker is not the last thing in the file. Modern
+-- @pg_dump@ writes about a hundred more bytes after it, and a version that
+-- writes more should not turn a good backup into a reported failure.
+dumpTailWindow :: Integer
+dumpTailWindow = 4096
+
+-- | Whether a downloaded dump carries the marker saying it is whole.
+--
+-- Only the end of the file is read, so this costs the same on a 70 MB dump as
+-- on a small one. It catches the failure that actually happens -- a transfer
+-- cut halfway -- and is what keeps a truncated dump from being recorded as a
+-- good backup.
+dumpLooksComplete :: FilePath -> IO (Either String ())
+dumpLooksComplete path = do
+  attempt <- try $ withBinaryFile path ReadMode $ \h -> do
+    size <- hFileSize h
+    hSeek h AbsoluteSeek (max 0 (size - dumpTailWindow))
+    BC.unpack <$> BS.hGetContents h
+  return $ case attempt of
+    Left (e :: IOException) -> Left (show e)
+    Right end
+      | dumpCompleteMarker `isInfixOf` end -> Right ()
+      | otherwise -> Left ("its last " <> show dumpTailWindow
+                            <> " bytes do not carry pg_dump's completion marker, "
+                            <> "so the transfer did not finish")
 
 -- | Name of the link that always points at the newest backup.
 latestLinkName :: String

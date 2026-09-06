@@ -95,6 +95,8 @@ backup/prueba/latest -> 2026-09-05T07           a link to the newest one
 
 The name is a truncated ISO 8601 timestamp, so `ls` lists backups in the order they were taken.
 
+A backup only counts once everything has arrived. The dump is checked for the marker `pg_dump` writes when it finishes, and if it is not there the backup is not recorded and `latest` keeps pointing at the previous one. A transfer cut halfway leaves a directory behind, but never one that passes for a good backup.
+
 The uploads directory keeps the name it has on the remote, so an
 `appConfig.structure` of `/loads` arrives as `loads`.
 

@@ -57,6 +57,10 @@
 * The `latest` link is relative, so a backup directory can be copied or moved
   somewhere else and it still resolves. Links written before this stay
   absolute until the next backup replaces them.
+* A downloaded dump is checked for the marker pg_dump writes when it has
+  finished. Without it the backup is not recorded and `latest` keeps pointing
+  at the previous one, so a transfer cut halfway can no longer pass for a
+  good backup.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 
