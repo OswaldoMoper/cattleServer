@@ -15,12 +15,10 @@ import           Proc                         (runTool, runToolStreaming,
 import           Progress                     (parseProgress, progressComplete,
                                                renderProgress, statsWorthKeeping,
                                                throttled)
-import           System.Directory             (doesDirectoryExist)
 import           System.Exit                  as E
 import           System.IO                    (BufferMode (LineBuffering),
                                                hSetBuffering, hSetEncoding,
                                                stdout, utf8)
-import           System.Process
 import           Time
 
 -- | Log directory used before any configuration has been read: the sibling
