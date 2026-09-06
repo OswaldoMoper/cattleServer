@@ -54,6 +54,9 @@
   one line every `progressEvery` seconds plus one when they finish. The
   `--stats` summary that follows carries the speedup, which is the number that
   says whether the incremental copy is working.
+* The `latest` link is relative, so a backup directory can be copied or moved
+  somewhere else and it still resolves. Links written before this stay
+  absolute until the next backup replaces them.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

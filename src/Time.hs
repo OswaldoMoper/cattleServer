@@ -226,15 +226,21 @@ isRealDirectory path = do
 -- Gives a path that does not change between backups, while the directory it
 -- resolves to still carries the date. Refuses to touch anything that is not
 -- already a symlink, so a directory of that name is never destroyed.
+--
+-- The link is /relative/: the target is always a sibling, so naming it by its
+-- own name and nothing more lets the whole tree be copied, moved or mounted
+-- somewhere else without the link going stale. An absolute one would still
+-- name the path it was written on.
 linkLatest :: FilePath -> FilePath -> IO (Either String ())
 linkLatest root target = do
-  let link = root <> "/" <> latestLinkName
+  let link     = root <> "/" <> latestLinkName
+      sibling  = takeFileName (dropTrailingPathSeparator target)
   replaceable <- isExistingSymlink link
   attempt <- try $ do
     case replaceable of
       True  -> removeLink link
       False -> return ()
-    createSymbolicLink target link
+    createSymbolicLink sibling link
   return $ case attempt of
     Right ()                -> Right ()
     Left (e :: IOException) -> Left (show e)

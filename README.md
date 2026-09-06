@@ -125,6 +125,29 @@ That last number is the one to look at. It is the size of the tree divided by wh
 
 The total carries a tilde because rsync reports how far it has got and what fraction that is, never the total, so it is inferred.
 
+## Moving a backup, and restoring from one
+
+`latest` is a relative link, so the whole directory can be copied, moved or mounted somewhere else and it still resolves.
+
+The files inside are hardlinked between generations, which sounds like it should complicate moving them and does not: **a hardlinked file is an ordinary file**. There is no original and no copy, only one piece of data with more than one name, and every name is complete. `cat`, `cp`, an editor, Windows over a network share -- all of them see the whole file. Nothing can dangle.
+
+What differs is only how much space arrives with it:
+
+| | |
+| --- | --- |
+| `rsync -a` | full copies at the destination; correct, larger |
+| `rsync -aH` | keeps the sharing, so the destination costs what the source did |
+| `tar` | records the links and recreates them on extraction |
+| `scp -r`, a file manager, a network share | full copies |
+
+To restore the database:
+
+```sh
+psql -U <role> -d <database> < latest/<database>.sql
+```
+
+The role has to exist first. `pg_dump` covers one database and not the cluster's roles, passwords or tablespaces -- if those are declared in your NixOS configuration, rebuilding the host recreates them; if they are not, they exist only inside the cluster and are not in this backup.
+
 ## Trusting the remote host
 
 libssh2 refuses a host that is not in the `known_hosts` file, so this used to need somebody to `ssh` in by hand once per machine. The service does it itself now, in one of three ways.
