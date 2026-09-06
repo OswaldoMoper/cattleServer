@@ -44,6 +44,12 @@
   backup. **rsync is now required on both machines.** `du` on one backup
   counts blocks it shares with its neighbours; `du` over the whole
   application directory is still right.
+* The remote is asked whether it has rsync over the SSH session that is
+  already open, and says so plainly when it does not, instead of leaving an
+  unexplained failure. `remoteRsyncPath` names where it lives when a
+  non-interactive ssh cannot find it. rsync exit code 24 -- files that
+  vanished on the remote mid-copy -- counts as success, since that is normal
+  for a live uploads directory.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

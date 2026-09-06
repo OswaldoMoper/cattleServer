@@ -187,12 +187,18 @@ saveBackup utc app database config knownHost localHost logDirPath policy = do
           case resultExit result of
             SSH.ExitSuccess -> writeLog logFilePath "Success" (sqlFile <> " created successfully")
             _           -> writeLog logFilePath "Error" (show (resultErr result))
+          rsyncThere  <- runSimpleSSH $ remoteHasRsync session (remoteRsyncPath config)
           closeResponse <- runSimpleSSH $ closeSession session
           case closeResponse of
             Left err -> do
               writeLog logFilePath "Error" (show err)
             Right () -> do
               writeLog logFilePath "Success" "SSH connection closed"
+              case rsyncThere of
+                Right False -> writeLog logFilePath "Error"
+                  ("rsync is not available on " <> hostName (remoteHost config)
+                    <> "; install it there, or name where it lives with remoteRsyncPath")
+                _           -> return ()
               case sshCommand (portNumber config) knownHost (keyDirectory config) of
                 Left err  -> writeLog logFilePath "Error" err
                 Right ssh -> do
@@ -206,19 +212,19 @@ saveBackup utc app database config knownHost localHost logDirPath policy = do
                                       , xferInto      = dir
                                       }
                   (sqlExit, sqlErr) <- rsyncDown xfer True (remotePath <> "/backup/" <> sqlFile) (const (return ()))
-                  case sqlExit of
-                    E.ExitSuccess -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
-                    _             -> writeLog logFilePath "Error" sqlErr
+                  case rsyncSucceeded sqlExit of
+                    True  -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
+                    False -> writeLog logFilePath "Error" (rsyncDiagnosis sqlExit sqlErr)
                   (uploadExit, uploadErr) <- rsyncDown xfer False (structure app) (const (return ()))
-                  case uploadExit of
-                    E.ExitSuccess -> do
+                  case rsyncSucceeded uploadExit of
+                    True  -> do
                       writeLog logFilePath "Success" (uploadDirName (structure app) <> " downloaded successfully")
                       linked <- linkLatest appRoot dir
                       case linked of
                         Left err -> writeLog logFilePath "Error" ("Could not point " <> latestLinkName <> " at " <> dir <> ": " <> err)
                         Right () -> writeLog logFilePath "Success" (latestLinkName <> " now points at " <> dir)
                       writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
-                    _             -> writeLog logFilePath "Error" uploadErr
+                    False -> writeLog logFilePath "Error" (rsyncDiagnosis uploadExit uploadErr)
 
 -- | Establish that the remote host is trusted, then open a session to it.
 --
@@ -283,6 +289,45 @@ databaseBackupInServer session database remote = do
       <> " "               <> shellQuote dbStruct
       <> " > "             <> shellQuote (remoteDir <> "/" <> dbStruct <> ".sql")
   return response
+
+-- | Whether the remote can be pulled from with rsync, asked over the session
+-- that is already open.
+--
+-- @command -v@ is a shell builtin, so this needs nothing installed in order
+-- to report that nothing is installed. A configured 'remoteRsyncPath' is
+-- tested as a path instead, since naming one is how an operator says where it
+-- really is.
+remoteHasRsync :: Session -> Maybe String -> SimpleSSH Bool
+remoteHasRsync session m_path = do
+  let probe = case m_path of
+        Just path -> "test -x " <> shellQuote path
+        Nothing   -> "command -v rsync >/dev/null 2>&1"
+  result <- execCommand session probe
+  return (resultExit result == SSH.ExitSuccess)
+
+-- | Whether an rsync run counts as having produced a backup.
+--
+-- 24 means files disappeared on the remote while it was copying. That is
+-- ordinary for an uploads directory belonging to a live application, and does
+-- not make what was copied wrong.
+rsyncSucceeded :: ExitCode -> Bool
+rsyncSucceeded E.ExitSuccess      = True
+rsyncSucceeded (E.ExitFailure 24) = True
+rsyncSucceeded _                  = False
+
+-- | What an rsync exit code means, in words rather than as a number.
+rsyncDiagnosis :: ExitCode -> String -> String
+rsyncDiagnosis code err = case code of
+  E.ExitFailure 127 ->
+    "rsync is not on PATH here; the Nix wrapper and the unit's path are what "
+      <> "put it there. " <> err
+  E.ExitFailure 12  ->
+    "the remote end did not speak rsync -- usually it is not installed there, "
+      <> "or not on the short PATH a non-interactive ssh gets, which "
+      <> "remoteRsyncPath exists to fix. " <> err
+  E.ExitFailure 23  -> "some files could not be transferred: " <> err
+  E.ExitFailure 30  -> "the transfer timed out: " <> err
+  _                 -> err
 
 -- | Everything a transfer needs that does not change between the two copies
 -- one backup makes.
