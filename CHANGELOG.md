@@ -2,65 +2,89 @@
 
 ## 0.11.0
 
-* cattleServer maintains the `known_hosts` file itself, so a new machine no
-  longer needs somebody to `ssh` into the remote host by hand first. Host keys
-  can be declared in the configuration, or scanned on first use and checked
-  against a pinned fingerprint. Neither ever replaces an entry already there.
+### Installing and configuring
+
 * The flake exports `nixosModules.default` and `overlays.default`. The service
-  is configured through `services.cattleServer`, with the real configuration
-  kept out of the Nix store via `settingsFile`.
-* The configuration file is found through an argument or
-  `CATTLESERVER_CONFIG`, not only relative to the working directory, and the
-  log directory is a setting rather than a path relative to it.
-* `scp` is resolved on `PATH` instead of an absolute NixOS-only path, and uses
-  the remote user, port and `known_hosts` file from the configuration.
-* A missing `openssh` fails one backup instead of stopping the service.
+  is configured through `services.cattleServer`, and no file has to be copied
+  into anyone's configuration. The real configuration is kept out of the Nix
+  store with `settingsFile`, which arrives as a systemd credential.
+* The configuration file is found through a command line argument or
+  `CATTLESERVER_CONFIG`, not only relative to the working directory, so the
+  service no longer has to be started from one particular place.
+* Failing to write the placeholder configuration is no longer fatal, which is
+  the normal case once the file is managed by Nix or agenix.
+
+### Trusting the remote host
+
+* cattleServer maintains the `known_hosts` file itself, so a new machine no
+  longer needs somebody to `ssh` in by hand first. Host keys can be declared
+  in the configuration -- or seeded from the module with `knownHostsSeed` --
+  or scanned on first use and checked against a pinned fingerprint. No policy
+  ever replaces an entry that is already there, so a host whose key changed
+  still fails.
+
+### Backups
+
+* **A backup is one directory named for its timestamp**, `2026-09-05T07`,
+  rather than four nested ones. Existing backups are renamed into the new
+  shape on the first pass; nothing has to be moved by hand.
+* **Backups are incremental.** rsync transfers only what changed and hardlinks
+  the rest against the previous backup, so each directory reads as a complete
+  tree while costing the difference. **rsync is now required on both
+  machines**, and the service says so plainly if the remote lacks it.
+  `remoteRsyncPath` names where it lives when a non-interactive ssh cannot
+  find it.
+* A `latest` link in each application's directory points at the newest
+  completed backup. It is relative, so a backup tree can be copied or moved
+  and it still resolves.
+* The uploads directory arrives under the name it has on the remote rather
+  than always being called `upload`, so `/loads` lands as `loads`.
+* Transfers report progress -- bytes, files, rate, elapsed and estimated time
+  -- one line every `progressEvery` seconds plus one when they finish,
+  followed by the `--stats` speedup that says whether the incremental copy is
+  working.
+
+### Keeping and checking them
+
+* **Deletion reaches every backup older than `deleteFrequency`**, oldest
+  first, where before it could only ever remove the one that fell exactly on
+  the cutoff -- so a day the service was down left backups behind forever.
+  **The first pass after upgrading clears whatever backlog that left.**
+* `keepAtLeast`, 2 by default, is a floor under that: deletion runs whether or
+  not the backup before it succeeded, so on its own a week of failing backups
+  would end with nothing at all.
+* A downloaded dump is checked for the marker `pg_dump` writes when it
+  finishes. Without it the backup is not recorded and `latest` keeps pointing
+  at the previous one, so a transfer cut halfway cannot pass for a good
+  backup.
+* Each backup carries a manifest of SHA-256 digests, in the format
+  `sha256sum` reads, so it can be checked by hand as well. With `verifyEvery`
+  set, one backup per pass is re-read and compared -- the only thing that
+  turns "it was written correctly" into "it is still correct".
+* `alertAfter` and `alertCommand` run something when an application has gone
+  too long without a successful backup. Logging is not warning.
+
+### Scheduling and output
+
 * `checkEvery` and `startupDelay` replace the half hour that was compiled in.
   Both default to it, so nothing changes until they are set.
-* `keepAtLeast`, 2 by default, is a floor under `deleteFrequency`. Deletion
-  went by date and ran whether or not the backup before it succeeded, so a
-  week of failing backups would have left nothing at all.
-* A `latest` link in each application's backup directory points at the newest
-  backup, and is only moved once one has finished.
-* The uploads directory arrives under the name it has on the remote instead of
-  always being called `upload`. A restore that reaches for `latest/upload`
-  needs the real name now, unless that is what it was called anyway.
-* Every line also goes to standard output, so `journalctl -u cattleServer`
-  shows the service. The log file is unchanged.
-* A backup is one directory named for its timestamp, `2026-09-05T07`, rather
-  than four nested ones. Deletion follows: it reaches every backup older than
-  `deleteFrequency` instead of only the one that fell on the cutoff, so a day
-  the service was down no longer leaves backups behind forever. **The first
-  pass after upgrading clears whatever backlog that left**, down to
-  `keepAtLeast`.
+* Every line also goes to standard output, with a syslog priority, so
+  `journalctl -u cattleServer` shows the service and can be filtered by level.
+  The log file keeps its exact shape, because the scheduler reads its own
+  markers back out of it.
+
+### Fixes
+
+* A missing external program fails one backup instead of stopping the service.
+  Nothing here can express a runtime dependency on `rsync` or `openssh`, so a
+  missing one was possible and would have thrown.
 * An application whose name contains a space no longer creates two
   directories.
-* Backups in the old nested layout are renamed into the new one on the first
-  pass, and the `latest` link is repointed after. Nothing has to be moved by
-  hand, and a rename that cannot be done leaves that backup where it is for
-  the next pass to retry.
-* Backups are pulled with `rsync --link-dest` rather than `scp`, so only what
-  changed is transferred and the rest is hardlinked against the previous
-  backup. **rsync is now required on both machines.** `du` on one backup
-  counts blocks it shares with its neighbours; `du` over the whole
-  application directory is still right.
-* The remote is asked whether it has rsync over the SSH session that is
-  already open, and says so plainly when it does not, instead of leaving an
-  unexplained failure. `remoteRsyncPath` names where it lives when a
-  non-interactive ssh cannot find it. rsync exit code 24 -- files that
-  vanished on the remote mid-copy -- counts as success, since that is normal
-  for a live uploads directory.
-* Transfers report progress: bytes, files, rate, elapsed and estimated time,
-  one line every `progressEvery` seconds plus one when they finish. The
-  `--stats` summary that follows carries the speedup, which is the number that
-  says whether the incremental copy is working.
-* The `latest` link is relative, so a backup directory can be copied or moved
-  somewhere else and it still resolves. Links written before this stay
-  absolute until the next backup replaces them.
-* A downloaded dump is checked for the marker pg_dump writes when it has
-  finished. Without it the backup is not recorded and `latest` keeps pointing
-  at the previous one, so a transfer cut halfway can no longer pass for a
-  good backup.
+* An unexpected directory name no longer throws where a number was expected.
+* The SSH session is closed when authentication fails, instead of being leaked
+  once per failure for the lifetime of the daemon.
+* Values from the configuration are quoted before being interpolated into the
+  remote shell command.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

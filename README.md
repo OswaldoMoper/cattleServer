@@ -52,7 +52,9 @@ services.cattleServer.settingsFile = config.age.secrets.cattleServerConfig.path;
 
 ### Anywhere else
 
-`nix build` produces `result/bin/cattleServer`, wrapped so that `openssh` and `coreutils` are on its `PATH`. The service shells out to `ssh-keygen`, `ssh-keyscan`, `scp`, `mkdir` and `rm`, so those have to be reachable.
+`nix build` produces `result/bin/cattleServer`, wrapped so that `openssh`, `rsync` and `coreutils` are on its `PATH`. The service shells out to `ssh-keygen`, `ssh-keyscan`, `rsync`, `rm`, and to `sh` if an alert command is configured, so those have to be reachable.
+
+**rsync must also be installed on the machine being backed up.** The service checks over the SSH session it already has open and says so if it is missing. If it is installed but not on the short `PATH` a non-interactive `ssh host command` gets -- which is the usual case on NixOS -- name it with `remoteRsyncPath` rather than editing a shell profile over there.
 
 ## Configuring
 
@@ -112,14 +114,30 @@ Three different things get confused with each other, and only one of them is wha
 | --- | --- |
 | A file deleted or ruined at the source | Several generations: `deleteFrequency` and `keepAtLeast` |
 | A transfer cut halfway | The completeness check on the dump |
+| Backups quietly not happening at all | `alertAfter` and `alertCommand` |
+| Noticing a file has gone bad | `verifyEvery`, against the manifest |
 | **A file going bad on this disk** | **Only an independent lineage** -- see below |
 | **This disk dying** | **Nothing here.** A copy has to leave the machine |
 
-The third row is the one worth reading twice. Because unchanged files are hardlinked between generations, thirty generations of a file that never changed are **thirty names for one piece of data**. If that data goes bad, all thirty go with it. Keeping more generations protects against deletion and against bad changes upstream; it does not protect against the disk.
+The fifth row is the one worth reading twice. Because unchanged files are hardlinked between generations, thirty generations of a file that never changed are **thirty names for one piece of data**. If that data goes bad, all thirty go with it. Keeping more generations protects against deletion and against bad changes upstream; it does not protect against the disk.
 
 What does protect against it is a second lineage: another entry in `apps` with its own `appConfig.name`, and ideally a different schedule. Separate names mean separate directories, and `--link-dest` never reaches across them, so the two copies share nothing. That independence is exactly what it costs -- the second lineage is a full copy.
 
-And the fourth row is not something this service can fix. Every generation lives on one filesystem, so however many there are, one failure takes all of them. A backup that has never left the machine it backs up to is one disk away from not existing.
+And the last row is not something this service can fix. Every generation lives on one filesystem, so however many there are, one failure takes all of them. A backup that has never left the machine it backs up to is one disk away from not existing.
+
+### Knowing rather than assuming
+
+Two of those rows are about finding out, and both are off unless asked for.
+
+Every backup carries a `manifest.sha256` of everything in it, written once the backup is complete. Set `verifyEvery` to a number of hours and one backup per pass is re-read and compared against its own manifest. Which one rotates on its own: the least recently checked is always next. It costs reading a whole backup, which is why it is opt-in.
+
+The manifest is in the format `sha256sum` reads, so a backup can also be checked without this program at all:
+
+```sh
+cd backup/prueba/latest && sha256sum -c manifest.sha256
+```
+
+And `alertAfter`, a number of hours, with `alertCommand`, runs something when an application has gone that long without a successful backup -- one command per window, not one per pass, and a backup that succeeds resets it. A machine that has never backed up counts as overdue, which is deliberate: a deployment that never worked is the one you most want to hear about.
 
 Backups are incremental. rsync transfers only what changed since the last one, and hardlinks the rest against the previous backup, so each directory reads as a complete tree while costing only the difference. Three generations of a tree with one changed file take the space of one tree plus that file, not three trees.
 

@@ -73,9 +73,8 @@ backupDirName = formatTime defaultTimeLocale backupDirFormat
 
 -- | The time a directory name stands for, if it is one of ours.
 --
--- Total, where the nested layout's 'takeTailInt' was a partial 'read': a name
--- that is not a backup -- @latest@, a leftover, anything else -- is 'Nothing'
--- rather than an exception that takes the daemon down.
+-- Total: a name that is not a backup -- @latest@, a leftover, anything else
+-- -- is 'Nothing' rather than an exception that takes the daemon down.
 parseBackupDirName :: String -> Maybe UTCTime
 parseBackupDirName = parseTimeM False defaultTimeLocale backupDirFormat
 
