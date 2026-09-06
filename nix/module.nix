@@ -72,6 +72,20 @@ let
           here avoids having to edit a shell profile on the other machine.
         '';
       };
+      alertAfter = mkOption {
+        type = types.nullOr types.ints.positive;
+        default = null;
+        example = 24;
+        description = ''
+          Hours without a successful backup before `alertCommand` is run. Null
+          never alerts.
+
+          Set it comfortably above `backupFrequency`, so an ordinary late run
+          does not raise one. A machine that has never backed up counts as
+          overdue, which is deliberate: a deployment that never worked is
+          exactly what you want to hear about.
+        '';
+      };
       keepAtLeast = mkOption {
         type = types.ints.unsigned;
         default = 2;
@@ -204,6 +218,19 @@ let
           checking touches it, so the least recently checked one is always
           next and they rotate on their own. It costs reading a whole backup,
           which is why it is off unless asked for.
+        '';
+      };
+      alertCommand = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "mail -s 'cattleServer' someone@example.org";
+        description = ''
+          Shell command run when an application passes its `alertAfter`, with
+          the detail on its standard input.
+
+          Logging is not warning: a service that has been failing for a month
+          has been saying so all along, in a file nobody reads. One command
+          per window, not per pass, and a backup that succeeds resets it.
         '';
       };
       apps = mkOption {

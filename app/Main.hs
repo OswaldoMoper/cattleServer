@@ -22,7 +22,7 @@ import           Progress                     (parseProgress, progressComplete,
                                                renderProgress, statsWorthKeeping,
                                                throttled)
 import           System.Exit                  as E
-import           System.Directory             (getModificationTime,
+import           System.Directory             (getModificationTime, removeFile,
                                                setModificationTime)
 import           System.IO                    (BufferMode (LineBuffering),
                                                hSetBuffering, hSetEncoding,
@@ -69,6 +69,7 @@ recursiveBackup waitMinutes = do
       recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath (resolveHostKeyPolicy software) (resolveProgressEvery software)
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
       verifyApps (apps software) (localHost software) logDirPath (verifyEvery software)
+      alertApps  (apps software) logDirPath (alertCommand software)
       recursiveBackup (resolveCheckEvery software)
 
 -- | Bring every application's backups into the current layout.
@@ -103,6 +104,72 @@ repointLatest logFilePath appRoot = do
         Left err -> writeLog logFilePath "Error"
           ("Could not point " <> latestLinkName <> " at " <> newest <> ": " <> err)
         Right () -> return ()
+
+-- | Run a command when an application has gone too long without a backup.
+--
+-- Logging is not warning. A service that has been failing for a month has
+-- been saying so all along, in a file nobody reads. This is the part that
+-- goes and tells someone: the command gets the detail on its standard input,
+-- so it can be a mail, a webhook, or anything a shell can express.
+--
+-- One alert per window rather than one per pass, tracked by a marker file
+-- beside the logs. A backup that succeeds clears the marker, so the next time
+-- things go wrong it is reported promptly instead of after another window.
+--
+-- Note what happens on a machine that has never backed up: 'getLastBackup'
+-- reports the last one as very long ago, so it alerts. That is deliberate --
+-- a deployment that has never worked is exactly what you want to hear about.
+alertApps :: [App] -> FilePath -> Maybe String -> IO ()
+alertApps _       _          Nothing        = return ()
+alertApps theApps logDirPath (Just command) = mapM_ one theApps
+  where
+    one theApp = do
+      let nameApp = name (appConfig theApp)
+      case alertAfter (serviceConfig theApp) of
+        Nothing    -> return ()
+        Just hours -> do
+          now      <- getCurrentTime
+          lastGood <- getLastBackup logDirPath nameApp
+          let age = hoursDiff now lastGood
+          case age >= hours of
+            False -> clearMarker (alertMarkerPath logDirPath nameApp)
+            True  -> do
+              due <- markerOlderThan (alertMarkerPath logDirPath nameApp) now hours
+              case due of
+                False -> return ()
+                True  -> raise nameApp hours age
+
+    raise nameApp hours age = do
+      let logFilePath = appLogPath logDirPath nameApp
+          body = "cattleServer: " <> nameApp <> " has not been backed up for "
+                   <> show age <> " hours, and the limit is " <> show hours <> ".\n"
+      (code, _, err) <- runTool "sh" ["-c", command] body
+      case code of
+        E.ExitSuccess -> do
+          writeLog logFilePath "Alert"
+            (nameApp <> " has not been backed up for " <> show age
+              <> " hours; the alert command was run")
+          touched <- try' (getCurrentTime >>= setModificationTime (alertMarkerPath logDirPath nameApp))
+          case touched of
+            Right () -> return ()
+            Left _   -> writeFile (alertMarkerPath logDirPath nameApp) ""
+        _ -> writeLog logFilePath "Error" ("the alert command failed: " <> err)
+
+alertMarkerPath :: FilePath -> String -> FilePath
+alertMarkerPath logDirPath nameApp = logDirPath <> "/" <> nameApp <> ".alerted"
+
+-- | Whether the marker is missing, or older than the window.
+markerOlderThan :: FilePath -> UTCTime -> Int -> IO Bool
+markerOlderThan path now hours = do
+  stamped <- try' (getModificationTime path)
+  return $ case stamped of
+    Left _  -> True
+    Right t -> hoursDiff now t >= hours
+
+clearMarker :: FilePath -> IO ()
+clearMarker path = do
+  _ <- try' (removeFile path)
+  return ()
 
 -- | Check one backup per application against its manifest, when one is due.
 --

@@ -11,6 +11,7 @@
     "startupDelay": "Optional, minutes to wait before the first pass (default 30). Zero makes the first pass happen at startup, which on a machine with no log yet means backing up immediately, because nothing records a previous backup",
     "progressEvery": "Optional, seconds between two progress lines while a transfer is running (default 30). rsync reports several times a second, so this keeps a large transfer to a handful of lines. The line saying the transfer finished is always reported",
     "verifyEvery": "Optional, hours between re-reading one backup and checking it against the manifest written when it was made. Absent never does. This is what turns 'it was written correctly' into 'it is still correct'; it costs reading a whole backup, so it is off unless asked for",
+    "alertCommand": "Optional, shell command run when an application passes its alertAfter, with the detail on standard input. Logging is not warning: a service failing for a month has been saying so in a file nobody reads. One command per window, not per pass, and a successful backup resets it",
     "apps": [
         {
             "appConfig": {
@@ -42,6 +43,7 @@
                 "portNumber": "Add here the port will be used to connect to the remote host (def 22)",
                 "keepAtLeast": "Optional, how many backups must survive whatever deleteFrequency would remove (default 2). Deletion goes by date and runs whether or not the backup before it succeeded, so on its own it empties the directory after a week of failing backups. Two means a corrupt newest backup still leaves one behind it. Zero restores deletion that only looks at the calendar",
                 "remoteRsyncPath": "Optional, where rsync lives on the remote host. Only needed when it is not on the PATH a non-interactive 'ssh host command' gets, which on NixOS is a short one",
+                "alertAfter": "Optional, hours without a successful backup before alertCommand is run. Absent never alerts. Set it comfortably above backupFrequency so an ordinary late run does not raise one",
                 "hostKeys": "Optional. The remote host's public keys, as knownHosts lines or bare '<type> <base64>' pairs. Declared keys are installed as they are, without asking the network, which is what makes hostKeyPolicy 'strict' usable",
                 "hostKeyFingerprint": "Optional, 'SHA256:...'. A scanned key has to match it to be trusted. Only consulted when the host is scanned, not when hostKeys are declared"
             }

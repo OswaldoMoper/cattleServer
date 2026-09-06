@@ -78,6 +78,9 @@ data Config = Config
   , remoteRsyncPath    :: Maybe String
   -- ^ Where @rsync@ lives on the remote, for when it is not on the @PATH@ a
   -- non-interactive @ssh host command@ gets -- which on NixOS is a short one.
+  , alertAfter         :: Maybe Int
+  -- ^ Hours without a successful backup before the alert command is run.
+  -- Absent never alerts.
   } deriving (Generic, Show, Read)
 
 instance FromJSON Config
@@ -108,6 +111,9 @@ data Service = Service
   , verifyEvery   :: Maybe Int
   -- ^ Hours between re-reading a backup and checking it against its own
   -- manifest. Absent means never.
+  , alertCommand  :: Maybe String
+  -- ^ Shell command run when an application has gone too long without a
+  -- successful backup, with the detail on its standard input.
   , apps          :: [App]
   }deriving (Generic, Show, Read)
 
@@ -289,6 +295,7 @@ exampleService =
         , hostKeyFingerprint = Nothing
         , keepAtLeast        = Just defaultKeepAtLeast
         , remoteRsyncPath    = Nothing
+        , alertAfter         = Nothing
         }
       app =
         App
@@ -305,5 +312,6 @@ exampleService =
      , startupDelay  = Just defaultStartupDelay
      , progressEvery = Just defaultProgressEvery
      , verifyEvery   = Nothing
+     , alertCommand  = Nothing
      , apps          = app : app : []
      }

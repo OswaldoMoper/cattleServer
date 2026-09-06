@@ -406,6 +406,7 @@ syslogPriority message
   | otherwise               = 6
   where
     errors   = [ "Error", "Config error", "Session Error", "Session Auth Error"
+               , "Alert"
                , "Known host error", "Known host mismatch" ]
     warnings = [ "Skipped" ]
     notices  = [ "Started", "Known host added" ]
