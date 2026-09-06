@@ -50,6 +50,10 @@
   non-interactive ssh cannot find it. rsync exit code 24 -- files that
   vanished on the remote mid-copy -- counts as success, since that is normal
   for a live uploads directory.
+* Transfers report progress: bytes, files, rate, elapsed and estimated time,
+  one line every `progressEvery` seconds plus one when they finish. The
+  `--stats` summary that follows carries the speedup, which is the number that
+  says whether the incremental copy is working.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

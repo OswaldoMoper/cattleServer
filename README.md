@@ -113,6 +113,18 @@ What does *not* change: every file is a complete, ordinary file. `cat`, `cp`, `t
 
 rsync must be installed on **both** machines.
 
+While a transfer runs, the log says how it is going, one line every `progressEvery` seconds plus one when it finishes:
+
+```text
+Progress: 45.7 MB of ~78.9 MB (58%), 25 of 45 files, 693.11MB/s, 01:35 elapsed, 0:12 left
+Success:  Total transferred file size: 2000000 bytes
+Success:  total size is 81500000  speedup is 40.72
+```
+
+That last number is the one to look at. It is the size of the tree divided by what was actually sent, so a speedup in the tens means the incremental copy is doing its job. A speedup near 1 on every run means it is not -- most likely because mtimes are not surviving the transfer, which is what makes rsync think every file has changed.
+
+The total carries a tilde because rsync reports how far it has got and what fraction that is, never the total, so it is inferred.
+
 ## Trusting the remote host
 
 libssh2 refuses a host that is not in the `known_hosts` file, so this used to need somebody to `ssh` in by hand once per machine. The service does it itself now, in one of three ways.

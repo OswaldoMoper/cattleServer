@@ -3,6 +3,8 @@ module Main where
 import           Config
 import           Control.Concurrent           (threadDelay)
 import           Data.Char                    (isSpace)
+import           Data.IORef                   (modifyIORef', newIORef,
+                                               readIORef)
 import           Data.Time.Clock
 import           KnownHosts                   (Request (..), ensureKnownHost,
                                                mayProceed, outcomeDescription,
@@ -10,6 +12,9 @@ import           KnownHosts                   (Request (..), ensureKnownHost,
 import           Network.SSH.Client.SimpleSSH as SSH
 import           Proc                         (runTool, runToolStreaming,
                                                shellQuote)
+import           Progress                     (parseProgress, progressComplete,
+                                               renderProgress, statsWorthKeeping,
+                                               throttled)
 import           System.Directory             (doesDirectoryExist)
 import           System.Exit                  as E
 import           System.IO                    (BufferMode (LineBuffering),
@@ -55,7 +60,7 @@ recursiveBackup waitMinutes = do
       let logDirPath = resolveLogDir software
       _ <- ensureLogDir logDirPath
       migrateApps (apps software) (localHost software) logDirPath
-      recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath (resolveHostKeyPolicy software)
+      recursiveSaveAppBackup (apps software) (knownHosts software) (localHost software) logDirPath (resolveHostKeyPolicy software) (resolveProgressEvery software)
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
       recursiveBackup (resolveCheckEvery software)
 
@@ -92,8 +97,8 @@ repointLatest logFilePath appRoot = do
           ("Could not point " <> latestLinkName <> " at " <> newest <> ": " <> err)
         Right () -> return ()
 
-saveAppBackup :: App -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
-saveAppBackup app knownHost localHost logDirPath policy = do
+saveAppBackup :: App -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO ()
+saveAppBackup app knownHost localHost logDirPath policy progressSecs = do
   current <- getCurrentTime
   let localPath = userHome localHost
       nameApp   = name (appConfig app)
@@ -108,14 +113,14 @@ saveAppBackup app knownHost localHost logDirPath policy = do
       "Months" -> return $ (monthsDiff current lastBackup) > (times backupF)
       _        -> return $ (hoursDiff  current lastBackup) > 8
   case doBackup of
-    True  -> saveBackup current (appConfig app) (databaseConfig app) (serviceConfig app) knownHost localHost logDirPath policy
+    True  -> saveBackup current app knownHost localHost logDirPath policy progressSecs
     False -> return ()
 
-recursiveSaveAppBackup :: [App] -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
-recursiveSaveAppBackup [] _ _ _ _                                       = return ()
-recursiveSaveAppBackup (app:apps) knownHost localHost logDirPath policy = do
-  saveAppBackup app knownHost localHost logDirPath policy
-  recursiveSaveAppBackup apps knownHost localHost logDirPath policy
+recursiveSaveAppBackup :: [App] -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO ()
+recursiveSaveAppBackup [] _ _ _ _ _ = return ()
+recursiveSaveAppBackup (app:rest) knownHost localHost logDirPath policy progressSecs = do
+  saveAppBackup app knownHost localHost logDirPath policy progressSecs
+  recursiveSaveAppBackup rest knownHost localHost logDirPath policy progressSecs
 
 -- | Delete the backups that are older than 'deleteFrequency', oldest first,
 -- while leaving at least 'keepAtLeast' of them.
@@ -165,9 +170,12 @@ recursiveDeleteAppBackup (app:apps) localHost logDirPath = do
 
 -- | Login to the server via SSH, backs up the database and downloads the full backup locally via SCP.
 -- Write to the log file during the process.
-saveBackup :: UTCTime -> Route -> Route -> Config -> String -> Host -> FilePath -> HostKeyPolicy -> IO ()
-saveBackup utc app database config knownHost localHost logDirPath policy = do
-  let appName     = name app
+saveBackup :: UTCTime -> App -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO ()
+saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
+  let app         = appConfig theApp
+      database    = databaseConfig theApp
+      config      = serviceConfig theApp
+      appName     = name app
       sqlFile     = structure database <> ".sql"
       localPath   = userHome localHost
       remotePath  = userHome (remoteHost config)
@@ -211,11 +219,11 @@ saveBackup utc app database config knownHost localHost logDirPath policy = do
                                       , xferLinkDests = linkDests
                                       , xferInto      = dir
                                       }
-                  (sqlExit, sqlErr) <- rsyncDown xfer True (remotePath <> "/backup/" <> sqlFile) (const (return ()))
+                  (sqlExit, sqlErr) <- transferWith logFilePath progressSecs xfer True (remotePath <> "/backup/" <> sqlFile)
                   case rsyncSucceeded sqlExit of
                     True  -> writeLog logFilePath "Success" (sqlFile <> " downloaded successfully")
                     False -> writeLog logFilePath "Error" (rsyncDiagnosis sqlExit sqlErr)
-                  (uploadExit, uploadErr) <- rsyncDown xfer False (structure app) (const (return ()))
+                  (uploadExit, uploadErr) <- transferWith logFilePath progressSecs xfer False (structure app)
                   case rsyncSucceeded uploadExit of
                     True  -> do
                       writeLog logFilePath "Success" (uploadDirName (structure app) <> " downloaded successfully")
@@ -328,6 +336,29 @@ rsyncDiagnosis code err = case code of
   E.ExitFailure 23  -> "some files could not be transferred: " <> err
   E.ExitFailure 30  -> "the transfer timed out: " <> err
   _                 -> err
+
+-- | Run one transfer, saying how it is going while it goes.
+--
+-- The throttle is made fresh for each transfer, so the two a backup makes do
+-- not share a clock and the second one still reports its first line promptly.
+-- Anything rsync prints that is not progress is checked for the few @--stats@
+-- lines worth keeping, and those are logged once the transfer is over.
+transferWith :: FilePath -> Int -> Transfer -> Bool -> String -> IO (ExitCode, String)
+transferWith logFilePath progressSecs xfer compress remotePath = do
+  started  <- getCurrentTime
+  emit     <- throttled (fromIntegral progressSecs) (writeLog logFilePath "Progress")
+  statsRef <- newIORef []
+  result   <- rsyncDown xfer compress remotePath $ \record ->
+    case parseProgress record of
+      Just p  -> do
+        now <- getCurrentTime
+        emit (progressComplete p) (renderProgress (diffUTCTime now started) p)
+      Nothing -> case statsWorthKeeping record of
+        True  -> modifyIORef' statsRef (record :)
+        False -> return ()
+  stats <- reverse <$> readIORef statsRef
+  mapM_ (writeLog logFilePath "Success") stats
+  return result
 
 -- | Everything a transfer needs that does not change between the two copies
 -- one backup makes.
