@@ -102,7 +102,24 @@ The uploads directory keeps the name it has on the remote, so an
 
 The directory name is the date, and `latest` is a path that does not change between backups, so `readlink backup/prueba/latest` answers both "where is the current backup" and "when was it taken". The link is only moved once a backup has finished, so it never points at a half written one.
 
-`deleteFrequency` removes every backup older than it, oldest first. On its own that is a hazard rather than a policy: it runs whether or not the backup before it succeeded, so a week of failing backups would see the last good one deleted on schedule and leave nothing at all. `keepAtLeast`, 2 by default, is the floor that stops it -- enough that a corrupt newest backup still has one behind it. Set it to zero to go back to deleting purely by the calendar.
+`deleteFrequency` removes every backup older than it, oldest first. On its own that is a hazard rather than a policy: it runs whether or not the backup before it succeeded, so a week of failing backups would see the last good one deleted on schedule and leave nothing at all. `keepAtLeast`, 2 by default, is the floor that stops it. Set it to zero to go back to deleting purely by the calendar.
+
+## What each defence actually covers
+
+Three different things get confused with each other, and only one of them is what most people mean by "I have backups".
+
+| Against | What covers it |
+| --- | --- |
+| A file deleted or ruined at the source | Several generations: `deleteFrequency` and `keepAtLeast` |
+| A transfer cut halfway | The completeness check on the dump |
+| **A file going bad on this disk** | **Only an independent lineage** -- see below |
+| **This disk dying** | **Nothing here.** A copy has to leave the machine |
+
+The third row is the one worth reading twice. Because unchanged files are hardlinked between generations, thirty generations of a file that never changed are **thirty names for one piece of data**. If that data goes bad, all thirty go with it. Keeping more generations protects against deletion and against bad changes upstream; it does not protect against the disk.
+
+What does protect against it is a second lineage: another entry in `apps` with its own `appConfig.name`, and ideally a different schedule. Separate names mean separate directories, and `--link-dest` never reaches across them, so the two copies share nothing. That independence is exactly what it costs -- the second lineage is a full copy.
+
+And the fourth row is not something this service can fix. Every generation lives on one filesystem, so however many there are, one failure takes all of them. A backup that has never left the machine it backs up to is one disk away from not existing.
 
 Backups are incremental. rsync transfers only what changed since the last one, and hardlinks the rest against the previous backup, so each directory reads as a complete tree while costing only the difference. Three generations of a tree with one changed file take the space of one tree plus that file, not three trees.
 
