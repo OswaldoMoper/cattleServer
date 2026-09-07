@@ -129,7 +129,7 @@ And the last row is not something this service can fix. Every generation lives o
 
 Two of those rows are about finding out, and both are off unless asked for.
 
-Every backup carries a `manifest.sha256` of everything in it, written once the backup is complete. Set `verifyEvery` to a number of hours and one backup per pass is re-read and compared against its own manifest. Which one rotates on its own: the least recently checked is always next. It costs reading a whole backup, which is why it is opt-in.
+Every backup carries a `manifest.sha256` of everything in it, written once the backup is complete. Set `verifyEvery` to a number of hours and one backup per pass is re-read and compared against its own manifest. Which one rotates on its own: the least recently checked is always next. It costs reading a whole backup, which is why it is opt-in -- the hashing is not the expensive part, the disk is.
 
 The manifest is in the format `sha256sum` reads, so a backup can also be checked without this program at all:
 
@@ -140,6 +140,8 @@ cd backup/prueba/latest && sha256sum -c manifest.sha256
 And `alertAfter`, a number of hours, with `alertCommand`, runs something when an application has gone that long without a successful backup -- one command per window, not one per pass, and a backup that succeeds resets it. A machine that has never backed up counts as overdue, which is deliberate: a deployment that never worked is the one you most want to hear about.
 
 Backups are incremental. rsync transfers only what changed since the last one, and hardlinks the rest against the previous backup, so each directory reads as a complete tree while costing only the difference. Three generations of a tree with one changed file take the space of one tree plus that file, not three trees.
+
+The dump is the exception, and it is what decides how much disk to budget. It changes in its entirety every time, so `--link-dest` never shares it and every generation holds a full copy -- while rsync still sends only the difference, because two plain text dumps taken a few hours apart are nearly identical. Cheap on the network, linear on disk: reckon one whole dump per generation, and the uploads roughly once.
 
 Two things follow from the hardlinks, and neither is obvious:
 
@@ -153,14 +155,18 @@ rsync must be installed on **both** machines.
 While a transfer runs, the log says how it is going, one line every `progressEvery` seconds plus one when it finishes:
 
 ```text
-Progress: 45.7 MB of ~78.9 MB (58%), 25 of 45 files, 693.11MB/s, 01:35 elapsed, 0:12 left
+Progress: 1.0 MB of ~1.9 MB (52%), 25 of 45 files, 12.35MB/s, 01:35 elapsed, 0:00:12 left
+Progress: 45 files checked, 1.9 MB transferred at 12.35MB/s, 01:47 elapsed
+Success:  Total file size: 81500000 bytes
 Success:  Total transferred file size: 2000000 bytes
-Success:  total size is 81500000  speedup is 40.72
+Success:  total size is 81500000  speedup is 40.75
 ```
 
-That last number is the one to look at. It is the size of the tree divided by what was actually sent, so a speedup in the tens means the incremental copy is doing its job. A speedup near 1 on every run means it is not -- most likely because mtimes are not surviving the transfer, which is what makes rsync think every file has changed.
+The closing line states what the transfer cost rather than repeating the last one at 100%, and a generation that finds its uploads unchanged closes with `nothing needed transferring` -- which is the incremental copy working perfectly, not a failure.
 
-The total carries a tilde because rsync reports how far it has got and what fraction that is, never the total, so it is inferred.
+That last number is the one to look at. It is the size of the tree divided by what was actually sent, so a speedup in the tens means the incremental copy is doing its job, and one in the thousands means almost nothing needed sending. A speedup near 1 on every run means it is not working -- most likely because mtimes are not surviving the transfer, which is what makes rsync think every file has changed.
+
+Only the running lines carry a tilde: rsync reports how far it has got and what fraction that is, never the total, so while a transfer is in flight the total is inferred. By the closing line it has arrived.
 
 ## Moving a backup, and restoring from one
 
