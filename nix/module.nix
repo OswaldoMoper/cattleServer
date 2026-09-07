@@ -160,10 +160,14 @@ let
           What to do when a host is not in known_hosts yet.
 
           `accept-new` scans the host and adds what it answers, optionally
-          checked against `hostKeyFingerprint`. `strict` never writes, so pair
-          it with `hostKeys` or `knownHostsSeed`.
+          checked against `hostKeyFingerprint`. `strict` refuses a host it does
+          not recognise instead of asking the network who it is, so pair it with
+          `hostKeys` or `knownHostsSeed`.
 
-          Neither ever replaces an entry that is already there.
+          `strict` rules out the scan, not every write: a key declared in
+          `hostKeys` is installed under either policy, since it did not come
+          from the network. And neither policy ever replaces an entry that is
+          already there.
         '';
       };
       checkEvery = mkOption {

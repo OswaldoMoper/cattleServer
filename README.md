@@ -48,11 +48,21 @@ Add the flake as an input and import the module:
 services.cattleServer.settingsFile = config.age.secrets.cattleServerConfig.path;
 ```
 
+**One thing follows from that and is worth knowing before the first deploy.** The unit runs under `ProtectSystem = "strict"`, so it can only write where it is told. When the settings are in Nix the module reads them and grants the paths they name; a credential it cannot read, so all it grants is `stateDir`. If the configuration inside that credential puts the backups, the logs or `known_hosts` anywhere else, name those paths in `extraReadWritePaths`:
+
+```nix
+services.cattleServer.extraReadWritePaths = [ "/srv/backup" ];
+```
+
+Getting this wrong does not look like a permissions error. The unit fails at step `NAMESPACE` before the program runs, so the journal shows a restart loop with nothing explaining it. The other options are `package`, `user`, `group`, `stateDir` and `protectHome`, all with sensible defaults.
+
 `configuration/cattleServer.nix` shows both shapes. `nix flake show` lists everything the flake exports; it needs `--allow-import-from-derivation`, because the Haskell build is a haskell.nix one. `nixos-rebuild` does not.
 
 ### Anywhere else
 
-`nix build` produces `result/bin/cattleServer`, wrapped so that `openssh`, `rsync` and `coreutils` are on its `PATH`. The service shells out to `ssh-keygen`, `ssh-keyscan`, `rsync`, `rm`, and to `sh` if an alert command is configured, so those have to be reachable.
+`nix build` produces `result/bin/cattleServer`, wrapped so that `openssh`, `rsync` and `coreutils` are on its `PATH`. Locally the service runs `ssh-keygen`, `ssh-keyscan`, `rsync`, `ssh` -- rsync is told to use it as its transport -- and `rm`. The wrapper covers those four packages' worth. It does not provide a shell: if `alertCommand` is set, the `sh` that runs it comes from the ambient `PATH`, which under systemd is the default one.
+
+On the machine being backed up the service needs `pg_dump`, `mkdir`, a shell, and **rsync**.
 
 **rsync must also be installed on the machine being backed up.** The service checks over the SSH session it already has open and says so if it is missing. If it is installed but not on the short `PATH` a non-interactive `ssh host command` gets -- which is the usual case on NixOS -- name it with `remoteRsyncPath` rather than editing a shell profile over there.
 
@@ -71,7 +81,9 @@ The file is re-read on every cycle, so an edit takes effect without a restart.
 Two fields decide where the service keeps its state:
 
 - `logDir` holds the service log and one log per application. It defaults to `<localHost.userHome>/cattleServer-Logs`. This is not only a log: the service decides when the next backup is due by reading back its own success markers, so pointing it somewhere new makes it take a backup immediately.
-- `knownHosts` is the file described below.
+- `knownHosts` is the file described below. Unlike almost everything else it has **no default in the program**: a hand-written configuration that omits the key does not parse, and the service logs a configuration error rather than starting. The NixOS module fills it in for you, at `<stateDir>/known_hosts`.
+
+The module also points `logDir` at `<stateDir>/cattleServer-Logs` rather than the default above, so that the state a backup schedule depends on lives where systemd manages it.
 
 Note that `appConfig.name` names the log file, the backup directory and that success marker, so renaming an application has the same effect.
 
@@ -129,7 +141,7 @@ And the last row is not something this service can fix. Every generation lives o
 
 Two of those rows are about finding out, and both are off unless asked for.
 
-Every backup carries a `manifest.sha256` of everything in it, written once the backup is complete. Set `verifyEvery` to a number of hours and one backup per pass is re-read and compared against its own manifest. Which one rotates on its own: the least recently checked is always next. It costs reading a whole backup, which is why it is opt-in -- the hashing is not the expensive part, the disk is.
+Every backup carries a `manifest.sha256` of everything in it, written once the backup is complete. Set `verifyEvery` to a number of hours and one backup **per application** is re-read each pass and compared against its own manifest. Which one rotates on its own: the least recently checked is always next. It costs reading a whole backup, which is why it is opt-in -- the hashing is not the expensive part, the disk is.
 
 The manifest is in the format `sha256sum` reads, so a backup can also be checked without this program at all:
 
@@ -139,7 +151,7 @@ cd backup/prueba/latest && sha256sum -c manifest.sha256
 
 And `alertAfter`, a number of hours, with `alertCommand`, runs something when an application has gone that long without a successful backup -- one command per window, not one per pass, and a backup that succeeds resets it. A machine that has never backed up counts as overdue, which is deliberate: a deployment that never worked is the one you most want to hear about.
 
-Backups are incremental. rsync transfers only what changed since the last one, and hardlinks the rest against the previous backup, so each directory reads as a complete tree while costing only the difference. Three generations of a tree with one changed file take the space of one tree plus that file, not three trees.
+Backups are incremental. rsync transfers only what changed since the last one, and hardlinks the rest against the two previous backups -- two, so that one interrupted generation does not force a full copy of the next -- and so each directory reads as a complete tree while costing only the difference. Three generations of a tree with one changed file take the space of one tree plus that file, not three trees.
 
 The dump is the exception, and it is what decides how much disk to budget. It changes in its entirety every time, so `--link-dest` never shares it and every generation holds a full copy -- while rsync still sends only the difference, because two plain text dumps taken a few hours apart are nearly identical. Cheap on the network, linear on disk: reckon one whole dump per generation, and the uploads roughly once.
 
@@ -207,7 +219,9 @@ or per connection, in `serviceConfig.hostKeys`. Either way the service never has
 
 **Trust on first use.** `hostKeyPolicy = "accept-new"`, the default, runs `ssh-keyscan` and adds what the host offers. Set `hostKeyFingerprint` to `SHA256:...` and only a key matching it is accepted.
 
-**Nothing.** `hostKeyPolicy = "strict"` never writes to the file. Use it when the entry is already there by other means.
+**Nothing from the network.** `hostKeyPolicy = "strict"` refuses a host it does not recognise rather than asking the network who it is. Note that it does not stop the service writing: a key you declared in `hostKeys` is still installed, because you are the one who said what it should be. What `strict` rules out is `ssh-keyscan`. So `strict` with declared keys is the strongest combination, and `strict` with none is a host that must already be in the file.
+
+The order is fixed and does not depend on the policy: an entry already present is never touched, then keys declared in the configuration, then -- only under `accept-new` -- whatever `ssh-keyscan` answers.
 
 No policy ever replaces an entry that already exists. If a host's key changes, the connection fails and says so, which is the point.
 

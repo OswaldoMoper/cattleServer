@@ -39,10 +39,12 @@
   and it still resolves.
 * The uploads directory arrives under the name it has on the remote rather
   than always being called `upload`, so `/loads` lands as `loads`.
-* Transfers report progress -- bytes, files, rate, elapsed and estimated time
-  -- one line every `progressEvery` seconds plus one when they finish,
-  followed by the `--stats` speedup that says whether the incremental copy is
-  working.
+* Transfers report progress: a line every `progressEvery` seconds carrying
+  bytes, files, rate, elapsed and the time still expected, and a closing line
+  saying what the transfer cost rather than repeating the last one at 100%. A
+  generation that finds nothing changed closes with `nothing needed
+  transferring`. Then the `--stats` speedup, which says whether the
+  incremental copy is working.
 
 ### Keeping and checking them
 
