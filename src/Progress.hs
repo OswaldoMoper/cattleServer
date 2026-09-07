@@ -5,6 +5,7 @@ module Progress
   ( Progress (..)
   , parseProgress
   , progressComplete
+  , progressWorthReporting
   , renderProgress
   , statsWorthKeeping
   , throttled
@@ -77,6 +78,14 @@ checkCounts record =
 progressComplete :: Progress -> Bool
 progressComplete p = progFilesLeft p == 0
 
+-- | Whether an update says anything yet.
+--
+-- The total is inferred from the percentage, so at zero there is nothing to
+-- infer it from and the line would read "0.0 MB of ~0.0 MB (0%)". rsync
+-- always opens with one of those.
+progressWorthReporting :: Progress -> Bool
+progressWorthReporting p = progPercent p > 0
+
 -- | rsync reports how far it has got and what fraction that is, never the
 -- total, so the total is inferred -- hence the tilde when it is rendered.
 estimatedTotal :: Progress -> Integer
@@ -90,7 +99,9 @@ renderProgress elapsed p = concat
   , " (", show (progPercent p), "%), "
   , show (progFilesAll p - progFilesLeft p), " of ", show (progFilesAll p), " files, "
   , progRate p, ", ", showDuration elapsed, " elapsed"
-  , ", ", progEta p, " left"
+  , case progressComplete p of
+      True  -> ""
+      False -> ", " <> progEta p <> " left"
   ]
 
 showMB :: Integer -> String

@@ -19,6 +19,7 @@ import           Network.SSH.Client.SimpleSSH as SSH
 import           Proc                         (runTool, runToolStreaming,
                                                shellQuote)
 import           Progress                     (parseProgress, progressComplete,
+                                               progressWorthReporting,
                                                renderProgress, statsWorthKeeping,
                                                throttled)
 import           System.Exit                  as E
@@ -506,9 +507,10 @@ transferWith logFilePath progressSecs xfer compress remotePath = do
   statsRef <- newIORef []
   result   <- rsyncDown xfer compress remotePath $ \record ->
     case parseProgress record of
-      Just p  -> do
+      Just p | progressWorthReporting p -> do
         now <- getCurrentTime
         emit (progressComplete p) (renderProgress (diffUTCTime now started) p)
+      Just _  -> return ()
       Nothing -> case statsWorthKeeping record of
         True  -> modifyIORef' statsRef (record :)
         False -> return ()
