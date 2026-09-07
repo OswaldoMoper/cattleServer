@@ -7,7 +7,7 @@ import           Control.Concurrent           (threadDelay)
 import           Control.Exception            (IOException, try)
 import           Data.Char                    (isSpace)
 import           Data.IORef                   (modifyIORef', newIORef,
-                                               readIORef)
+                                               readIORef, writeIORef)
 import           Data.List                    (intercalate, sortOn)
 import           Data.Time.Clock
 import           KnownHosts                   (Request (..), ensureKnownHost,
@@ -18,10 +18,10 @@ import           Manifest                     (manifestName, verifyManifest,
 import           Network.SSH.Client.SimpleSSH as SSH
 import           Proc                         (runTool, runToolStreaming,
                                                shellQuote)
-import           Progress                     (parseProgress, progressComplete,
+import           Progress                     (parseProgress,
                                                progressWorthReporting,
-                                               renderProgress, statsWorthKeeping,
-                                               throttled)
+                                               renderFinished, renderRunning,
+                                               statsWorthKeeping, throttled)
 import           System.Exit                  as E
 import           System.Directory             (getModificationTime, removeFile,
                                                setModificationTime)
@@ -500,20 +500,34 @@ rsyncDiagnosis code err = case code of
 -- not share a clock and the second one still reports its first line promptly.
 -- Anything rsync prints that is not progress is checked for the few @--stats@
 -- lines worth keeping, and those are logged once the transfer is over.
+--
+-- The closing line is written here rather than from inside the stream,
+-- because no single update announces itself as the last: @to-chk=0/1@ holds
+-- from start to finish of a single file transfer, which every dump is. Once
+-- rsync has exited, though, the update kept in 'lastRef' is the last one by
+-- definition -- and it is the one that says what the transfer cost.
 transferWith :: FilePath -> Int -> Transfer -> Bool -> String -> IO (ExitCode, String)
 transferWith logFilePath progressSecs xfer compress remotePath = do
   started  <- getCurrentTime
   emit     <- throttled (fromIntegral progressSecs) (writeLog logFilePath "Progress")
   statsRef <- newIORef []
+  lastRef  <- newIORef Nothing
   result   <- rsyncDown xfer compress remotePath $ \record ->
     case parseProgress record of
-      Just p | progressWorthReporting p -> do
-        now <- getCurrentTime
-        emit (progressComplete p) (renderProgress (diffUTCTime now started) p)
-      Just _  -> return ()
+      Just p -> do
+        writeIORef lastRef (Just p)
+        case progressWorthReporting p of
+          True  -> do
+            now <- getCurrentTime
+            emit (renderRunning (diffUTCTime now started) p)
+          False -> return ()
       Nothing -> case statsWorthKeeping record of
         True  -> modifyIORef' statsRef (record :)
         False -> return ()
+  finished <- readIORef lastRef
+  ended    <- getCurrentTime
+  mapM_ (writeLog logFilePath "Progress" . renderFinished (diffUTCTime ended started))
+        finished
   stats <- reverse <$> readIORef statsRef
   mapM_ (writeLog logFilePath "Success") stats
   return result

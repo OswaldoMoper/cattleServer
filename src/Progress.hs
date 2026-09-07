@@ -4,9 +4,9 @@
 module Progress
   ( Progress (..)
   , parseProgress
-  , progressComplete
   , progressWorthReporting
-  , renderProgress
+  , renderRunning
+  , renderFinished
   , statsWorthKeeping
   , throttled
   ) where
@@ -74,17 +74,22 @@ checkCounts record =
     tails' s@(_:xs) = s : tails' xs
     readInt s = readMaybe s :: Maybe Int
 
--- | Whether this update is the last one: nothing left to check.
-progressComplete :: Progress -> Bool
-progressComplete p = progFilesLeft p == 0
-
--- | Whether an update says anything yet.
+-- | Whether an update is worth a line while the transfer is still running.
 --
--- The total is inferred from the percentage, so at zero there is nothing to
--- infer it from and the line would read "0.0 MB of ~0.0 MB (0%)". rsync
--- always opens with one of those.
+-- Bounded at both ends. The total is inferred from the percentage, so at zero
+-- there is nothing to infer it from and the line would read "0.0 MB of ~0.0 MB
+-- (0%)"; rsync always opens with one of those. And at a hundred there is no
+-- progress left to describe and no time left to estimate, so the closing line
+-- is the one that should speak -- rsync repeats that last update several times
+-- over, which would otherwise be several identical lines claiming there is
+-- still time remaining.
+--
+-- Note that no update says whether it is the last one. @to-chk=0/1@ holds for
+-- the whole of a single file transfer -- which every database dump is -- so a
+-- record that looks finished may be at 20%. Which update was last is knowable
+-- only once the stream has ended, so that is where 'renderFinished' belongs.
 progressWorthReporting :: Progress -> Bool
-progressWorthReporting p = progPercent p > 0
+progressWorthReporting p = progPercent p > 0 && progPercent p < 100
 
 -- | rsync reports how far it has got and what fraction that is, never the
 -- total, so the total is inferred -- hence the tilde when it is rendered.
@@ -93,16 +98,42 @@ estimatedTotal p
   | progPercent p <= 0 = progBytes p
   | otherwise          = progBytes p * 100 `div` toInteger (progPercent p)
 
-renderProgress :: NominalDiffTime -> Progress -> String
-renderProgress elapsed p = concat
+-- | An update from the middle of a transfer: how far along, and how much
+-- longer.
+renderRunning :: NominalDiffTime -> Progress -> String
+renderRunning elapsed p = concat
   [ showMB (progBytes p), " MB of ~", showMB (estimatedTotal p), " MB"
   , " (", show (progPercent p), "%), "
   , show (progFilesAll p - progFilesLeft p), " of ", show (progFilesAll p), " files, "
   , progRate p, ", ", showDuration elapsed, " elapsed"
-  , case progressComplete p of
-      True  -> ""
-      False -> ", " <> progEta p <> " left"
+  , ", ", progEta p, " left"
   ]
+
+-- | The update that turned out to be the last one, which is a different
+-- statement rather than the same one at 100%.
+--
+-- Nothing is inferred here: the total has arrived, so there is no tilde to
+-- put on it and no percentage left to state, and an estimate of the time
+-- remaining would be an estimate of zero.
+--
+-- A transfer against a previous backup can find that nothing needs sending at
+-- all. That is the incremental copy working perfectly, so it is said in those
+-- words rather than as "0.0 MB at 0.00kB/s", which reads like a failure.
+renderFinished :: NominalDiffTime -> Progress -> String
+renderFinished elapsed p = concat
+  [ plural (progFilesAll p) "file", " checked, "
+  , case progBytes p of
+      0 -> "nothing needed transferring"
+      b -> showMB b <> " MB transferred at " <> progRate p
+  , ", ", showDuration elapsed, " elapsed"
+  ]
+
+plural :: Int -> String -> String
+plural n word = show n <> " " <> word <> suffix
+  where
+    suffix = case n == 1 of
+      True  -> ""
+      False -> "s"
 
 showMB :: Integer -> String
 showMB bytes =
@@ -131,32 +162,25 @@ statsWorthKeeping :: String -> Bool
 statsWorthKeeping line = any (`isInfixOf` line)
   [ "Total transferred file size", "Total file size", "speedup is" ]
 
--- | Rate-limit an action, with an override for the update that must not be
--- lost.
+-- | Rate-limit an action.
 --
--- rsync emits several updates a second. Reporting each would bury everything
--- else, and reporting none of the last one would leave the record stopping at
--- 97%. So: one every interval, plus the one that says it is finished.
---
--- That last one fires only once. rsync repeats its final update several times
--- over, so an override that fired every time would say "100%" three times in
--- a row.
-throttled :: NominalDiffTime -> (a -> IO ()) -> IO (Bool -> a -> IO ())
+-- rsync emits several updates a second, and reporting each would bury
+-- everything else in the log. So: one every interval, and the caller reports
+-- the closing line itself once the stream has ended, which is the only moment
+-- at which it is known to be the closing one.
+throttled :: NominalDiffTime -> (a -> IO ()) -> IO (a -> IO ())
 throttled interval act = do
-  ref <- newIORef (Nothing, False)
-  return $ \force x -> do
-    now <- getCurrentTime
-    (previous, overridden) <- readIORef ref
+  ref <- newIORef Nothing
+  return $ \x -> do
+    now      <- getCurrentTime
+    previous <- readIORef ref
     let due = case previous of
                 Nothing -> True
                 Just t  -> diffUTCTime now t >= interval
-        fire = case force of
-                 True  -> not overridden
-                 False -> due
-    case fire of
+    case due of
       False -> return ()
       True  -> do
-        writeIORef ref (Just now, overridden || force)
+        writeIORef ref (Just now)
         act x
 
 readDigits :: String -> Maybe Integer
