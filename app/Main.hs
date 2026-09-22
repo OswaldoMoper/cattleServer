@@ -8,7 +8,7 @@ import           Control.Exception            (IOException, try)
 import           Data.Char                    (isSpace)
 import           Data.IORef                   (modifyIORef', newIORef,
                                                readIORef, writeIORef)
-import           Data.List                    (intercalate, sortOn)
+import           Data.List                    (intercalate, isInfixOf, sortOn)
 import           Data.Time.Clock
 import           KnownHosts                   (Request (..), ensureKnownHost,
                                                mayProceed, outcomeDescription,
@@ -381,7 +381,7 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
       remotePath  = userHome (remoteHost config)
       logFilePath = appLogPath logDirPath appName
   writeLog (serviceLogPath logDirPath) "Backup in process" ("The cattleServer service is backing up " <> appName)
-  loginResponse <- loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config) policy (resolveHostKeys config) (hostKeyFingerprint config) logFilePath
+  loginResponse <- loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config) policy (resolveHostKeys config) (hostKeyFingerprint config) (resolveConnectTimeout config) logFilePath
   case loginResponse of
     Left err      -> do
       failWith logFilePath "Error" ("Fail to " <> show err)
@@ -407,7 +407,7 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
                   ("rsync is not available on " <> hostName (remoteHost config)
                     <> "; install it there, or name where it lives with remoteRsyncPath")
                 _           -> return ()
-              case sshCommand (portNumber config) knownHost (keyDirectory config) of
+              case sshCommand (portNumber config) knownHost (keyDirectory config) (resolveConnectTimeout config) of
                 Left err  -> failWith logFilePath "Error" err
                 Right ssh -> do
                   let appRoot = localPath <> "/backup/" <> appName
@@ -469,8 +469,8 @@ failWith logFilePath level message = do
 -- could work. That step happens here now.
 loginToServer :: Host -> Integer -> String -> Route
               -> HostKeyPolicy -> [String] -> Maybe String
-              -> String -> IO (Either SimpleSSHError Session)
-loginToServer remote port knownHost keys policy declared m_pinned logFilePath = do
+              -> Int -> String -> IO (Either SimpleSSHError Session)
+loginToServer remote port knownHost keys policy declared m_pinned connectSecs logFilePath = do
   outcome <- ensureKnownHost Request
     { reqFile        = knownHost
     , reqHost        = hostName remote
@@ -483,7 +483,15 @@ loginToServer remote port knownHost keys policy declared m_pinned logFilePath = 
            (outcomeDescription (hostName remote) port knownHost outcome)
   if not (mayProceed outcome)
     then return (Left KnownhostsCheck)
-    else loginToTrustedServer remote port knownHost keys logFilePath
+    else do
+      reach <- reachableOverSsh remote port knownHost keys connectSecs
+      case reach of
+        Left err -> do
+          writeLog logFilePath "Error"
+            ("cannot reach " <> userName remote <> "@" <> hostName remote
+              <> ":" <> show port <> " within " <> show connectSecs <> "s: " <> err)
+          return (Left Connect)
+        Right () -> loginToTrustedServer remote port knownHost keys logFilePath
 
 loginToTrustedServer :: Host -> Integer -> String -> Route -> String -> IO (Either SimpleSSHError Session)
 loginToTrustedServer remote port knownHost keys logFilePath = do
@@ -613,6 +621,17 @@ data Transfer = Transfer
   , xferInto      :: FilePath
   }
 
+-- | The arguments that identify this connection to @ssh@, without the host.
+sshArgs :: Integer -> FilePath -> Route -> Int -> [String]
+sshArgs port knownHost keys connectSecs =
+  [ "-i", structure keys <> "/" <> name keys, "-p", show port
+  , "-o", "IdentitiesOnly=yes"
+  , "-o", "BatchMode=yes"
+  , "-o", "StrictHostKeyChecking=yes"
+  , "-o", "UserKnownHostsFile=" <> knownHost
+  , "-o", "ConnectTimeout=" <> show connectSecs
+  ]
+
 -- | The @ssh@ command line rsync is told to use.
 --
 -- rsync splits this on whitespace and gives no way to quote, where @scp@ took
@@ -620,22 +639,39 @@ data Transfer = Transfer
 -- line that means something other than what the configuration says. Every
 -- option value here is free of whitespace by construction, so only the two
 -- paths need checking.
-sshCommand :: Integer -> FilePath -> Route -> Either String String
-sshCommand port knownHost keys
+sshCommand :: Integer -> FilePath -> Route -> Int -> Either String String
+sshCommand port knownHost keys connectSecs
   | any hasSpace [privateKey, knownHost] =
       Left ("rsync cannot be given a path containing whitespace: "
              <> unwords (filter hasSpace [privateKey, knownHost]))
-  | otherwise = Right (unwords
-      [ "ssh", "-i", privateKey, "-p", show port
-      , "-o", "IdentitiesOnly=yes"
-      , "-o", "BatchMode=yes"
-      , "-o", "StrictHostKeyChecking=yes"
-      , "-o", "UserKnownHostsFile=" <> knownHost
-      , "-o", "ConnectTimeout=30"
-      ])
+  | otherwise = Right (unwords ("ssh" : sshArgs port knownHost keys connectSecs))
   where
     privateKey = structure keys <> "/" <> name keys
     hasSpace   = any isSpace
+
+-- | Whether the remote answered at all, within @connectSecs@.
+--
+-- 'Left' only for the answers that mean nobody was there. Everything else --
+-- a refused key, a host key that changed -- is 'Right', because the host did
+-- answer and libssh2 is the one that should name what is wrong with it.
+reachableOverSsh :: Host -> Integer -> FilePath -> Route -> Int -> IO (Either String ())
+reachableOverSsh remote port knownHost keys connectSecs = do
+  (_, _, err) <- runTool "ssh"
+    (sshArgs port knownHost keys connectSecs
+      ++ [ userName remote <> "@" <> hostName remote, "true" ]) ""
+  let diagnosis = lastLine err
+  return $ if any (`isInfixOf` diagnosis) unreachable
+    then Left diagnosis
+    else Right ()
+  where
+    unreachable =
+      [ "timed out", "Connection refused", "No route to host"
+      , "Network is unreachable", "Name or service not known"
+      , "Temporary failure in name resolution"
+      ]
+    lastLine s = case reverse (filter (not . null) (lines s)) of
+      (l:_) -> l
+      []    -> ""
 
 -- | Pull a remote path into the backup directory with rsync.
 --

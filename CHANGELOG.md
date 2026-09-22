@@ -22,6 +22,18 @@
   or scanned on first use and checked against a pinned fingerprint. No policy
   ever replaces an entry that is already there, so a host whose key changed
   still fails.
+* `connectTimeout` bounds how long reaching the remote may take, thirty
+  seconds by default -- the same figure the transfers have always been given,
+  so nothing moves until it is set. Opening the session had no bound at all,
+  and the library that opens it is C code that cannot be interrupted from
+  Haskell, so a host that swallows the packets -- switched off, behind a
+  firewall that drops, a port nothing listens on -- stopped the service
+  indefinitely, and with it every other application, because they are backed
+  up one after another. Reaching the host is now checked with `ssh` first,
+  under that bound. That check only ever refuses the answers that mean nobody
+  was there -- timed out, refused, no route, unresolvable. A key that is not
+  accepted, or a host key that changed, still goes through to libssh2, which
+  is the one that should name what is wrong with it.
 * A host that did not end up in `known_hosts` is no longer connected to. The
   refusal was written to the log and then ignored, so a `strict` policy facing
   an unknown host announced itself and opened the connection anyway -- libssh2

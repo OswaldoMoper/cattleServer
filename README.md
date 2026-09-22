@@ -147,6 +147,7 @@ Three different things get confused with each other, and only one of them is wha
 | A file deleted or ruined at the source | Several generations: `deleteFrequency` and `keepAtLeast` |
 | A transfer cut halfway | The completeness check on the dump |
 | Backups quietly not happening at all | `alertAfter` and `alertCommand` |
+| One unreachable host stopping all the others | `connectTimeout`, 30s by default |
 | Noticing a file has gone bad | `verifyEvery`, against the manifest |
 | **A file going bad on this disk** | **Only an independent lineage** -- see below |
 | **This disk dying** | **Nothing here.** A copy has to leave the machine |

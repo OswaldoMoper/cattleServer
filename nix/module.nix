@@ -86,6 +86,20 @@ let
           exactly what you want to hear about.
         '';
       };
+      connectTimeout = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = ''
+          Seconds allowed for reaching the remote host, for the session and
+          for the transfers alike.
+
+          A host that refuses answers at once and does not wait this out; what
+          this bounds is a host that swallows the packets -- switched off,
+          behind a firewall that drops, or reachable at a port nothing listens
+          on. Without it such a host stops the whole service, because the
+          applications are backed up one after another.
+        '';
+      };
       keepAtLeast = mkOption {
         type = types.ints.unsigned;
         default = 2;

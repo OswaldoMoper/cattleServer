@@ -81,6 +81,9 @@ data Config = Config
   , alertAfter         :: Maybe Int
   -- ^ Hours without a successful backup before the alert command is run.
   -- Absent never alerts.
+  , connectTimeout     :: Maybe Int
+  -- ^ Seconds allowed for reaching the remote host, for both the session and
+  -- the transfers.
   } deriving (Generic, Show, Read)
 
 instance FromJSON Config
@@ -252,6 +255,17 @@ resolveStartupDelay = max 0 . fromMaybe defaultStartupDelay . startupDelay
 resolveProgressEvery :: Service -> Int
 resolveProgressEvery = max 1 . fromMaybe defaultProgressEvery . progressEvery
 
+-- | Seconds allowed for reaching the remote host.
+--
+-- The default is the thirty seconds the transfers have always been given, so
+-- nothing moves until it is set. Clamped to a second: zero would mean every
+-- host is unreachable.
+resolveConnectTimeout :: Config -> Int
+resolveConnectTimeout = max 1 . fromMaybe defaultConnectTimeout . connectTimeout
+
+defaultConnectTimeout :: Int
+defaultConnectTimeout = 30
+
 defaultProgressEvery :: Int
 defaultProgressEvery = 30
 
@@ -337,6 +351,7 @@ exampleService =
         , keepAtLeast        = Just defaultKeepAtLeast
         , remoteRsyncPath    = Nothing
         , alertAfter         = Nothing
+        , connectTimeout     = Just defaultConnectTimeout
         }
       app =
         App
