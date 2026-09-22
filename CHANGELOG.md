@@ -92,6 +92,17 @@
   that name. It is for a caller that has to know a backup happened before it
   does something else and cannot wait for the next pass. The backup goes into
   the same log as any other, so it also moves that application's window.
+* A configuration that cannot be used says why, and says it at once. A file
+  that did not parse produced `hasn't been configurated correctly` with the
+  path and nothing else -- and in the daemon that line did not arrive until
+  the startup delay had passed, half an hour by default, during which the
+  service looked healthy. The reason now names the field that is missing, or
+  the application that asks for nothing, and the daemon reports it as soon as
+  it starts. It still re-reads the file on every pass, so fixing it needs no
+  restart.
+* `backupFrequency` is optional in the configuration's shape, which is what
+  lets an entry ask for something other than a backup. An entry that asks for
+  nothing at all is rejected by name.
 * An unrecognised option is now an error. Before, the first non-empty argument
   was taken as the configuration path, so a mistyped flag became a file name
   and the daemon reported a configuration problem that was really a typo.

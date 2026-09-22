@@ -8,7 +8,8 @@ import           Control.Exception        (IOException, try)
 import           Data.Aeson
 import           Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy     as B
-import           Data.Maybe               (fromMaybe)
+import           Data.List                (intercalate)
+import           Data.Maybe               (fromMaybe, isNothing)
 import qualified Data.Text                as T
 import           GHC.Generics             (Generic)
 import           System.Directory         (doesFileExist)
@@ -65,7 +66,8 @@ data Config = Config
   { remoteHost         :: Host
   , keyDirectory       :: Route
   , portNumber         :: Integer
-  , backupFrequency    :: UnitTime
+  , backupFrequency    :: Maybe UnitTime
+  -- ^ How often this application is backed up. Absent means never.
   , deleteFrequency    :: UnitTime
   , hostKeys           :: Maybe [String]
   -- ^ Public keys of the remote host, as @known_hosts@ lines or bare
@@ -275,16 +277,35 @@ defaultCheckEvery = 30
 defaultStartupDelay :: Int
 defaultStartupDelay = 30
 
-readJSONconfigFrom :: FilePath -> IO (Maybe Service)
+-- | What is wrong with a configuration, one line per problem, each naming the
+-- application it belongs to.
+serviceProblems :: Service -> [String]
+serviceProblems service =
+  [ "application " <> name (appConfig app) <> " asks for nothing: it has no backupFrequency"
+  | app <- apps service
+  , isNothing (backupFrequency (serviceConfig app))
+  ]
+
+-- | Read the configuration, or say what is wrong with it.
+--
+-- A file that asks for nothing is as unusable as one that does not parse, and
+-- is reported the same way.
+readJSONconfigFrom :: FilePath -> IO (Either String Service)
 readJSONconfigFrom path = do
   fileExistance <- doesFileExist path
   case fileExistance of
     False -> do
-      _ <- writeJSONconfigTo path
-      return Nothing
+      written <- writeJSONconfigTo path
+      return . Left $ case written of
+        True  -> "no configuration at " <> path <> "; a placeholder was written there"
+        False -> "no configuration at " <> path
     True -> do
       jsons <- B.readFile path
-      return (decode jsons)
+      return $ case eitherDecode jsons of
+        Left err      -> Left (path <> ": " <> err)
+        Right service -> case serviceProblems service of
+          []       -> Right service
+          problems -> Left (intercalate "; " problems)
 
 -- | Write the placeholder configuration.
 --
@@ -344,7 +365,7 @@ exampleService =
         { remoteHost         = remote
         , keyDirectory       = keys
         , portNumber         = 22
-        , backupFrequency    = frequency
+        , backupFrequency    = Just frequency
         , deleteFrequency    = delete
         , hostKeys           = Nothing
         , hostKeyFingerprint = Nothing

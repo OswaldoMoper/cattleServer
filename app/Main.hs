@@ -49,16 +49,19 @@ main = do
       E.exitWith (E.ExitFailure 2)
     Right invocation -> do
       configPath <- resolveConfigPathFor invocation
-      m_service  <- readJSONconfigFrom configPath
+      e_service  <- readJSONconfigFrom configPath
       case invocationMode invocation of
-        Once appName -> runOnce appName configPath m_service >>= E.exitWith
+        Once appName -> runOnce appName e_service >>= E.exitWith
         Daemon       -> do
-          let logDirPath = maybe fallbackLogDir resolveLogDir m_service
+          let logDirPath = either (const fallbackLogDir) resolveLogDir e_service
           logDirExisted <- ensureLogDir logDirPath
           case logDirExisted of
             True  -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service has been started correctly"
             False -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service log folder has been created"
-          recursiveBackup configPath (maybe defaultStartupDelay resolveStartupDelay m_service)
+          case e_service of
+            Left err -> writeLog (serviceLogPath logDirPath) "Config error" err
+            Right _  -> return ()
+          recursiveBackup configPath (either (const defaultStartupDelay) resolveStartupDelay e_service)
 
 -- | Back up one named application now, whether or not its window has passed.
 --
@@ -68,11 +71,11 @@ main = do
 --
 -- The backup is recorded in the same log as any other, which also moves the
 -- application's window: a copy is a copy, whoever asked for it.
-runOnce :: String -> FilePath -> Maybe Service -> IO E.ExitCode
-runOnce _ configPath Nothing = do
-  hPutStrLn stderr ("cattleServer: no usable configuration at " <> configPath)
+runOnce :: String -> Either String Service -> IO E.ExitCode
+runOnce _ (Left err) = do
+  hPutStrLn stderr ("cattleServer: " <> err)
   return (E.ExitFailure 2)
-runOnce appName _ (Just service) =
+runOnce appName (Right service) =
   case filter ((== appName) . name . appConfig) (apps service) of
     []        -> do
       hPutStrLn stderr ("cattleServer: no application named " <> appName)
@@ -103,12 +106,12 @@ runOnce appName _ (Just service) =
 recursiveBackup :: FilePath -> Int -> IO ()
 recursiveBackup configPath waitMinutes = do
   threadDelay (minutesToMicros waitMinutes)
-  m_config   <- readJSONconfigFrom configPath
-  case m_config of
-    Nothing   -> do
-      writeLog (serviceLogPath fallbackLogDir) "Config error" ("The cattleServer service hasn't been configurated correctly: " <> configPath)
+  e_config   <- readJSONconfigFrom configPath
+  case e_config of
+    Left err   -> do
+      writeLog (serviceLogPath fallbackLogDir) "Config error" err
       recursiveBackup configPath defaultCheckEvery
-    Just software -> do
+    Right software -> do
       let logDirPath = resolveLogDir software
       _ <- ensureLogDir logDirPath
       migrateApps (apps software) (localHost software) logDirPath
@@ -288,16 +291,17 @@ saveAppBackup app knownHost localHost logDirPath policy progressSecs = do
   current <- getCurrentTime
   let localPath = userHome localHost
       nameApp   = name (appConfig app)
-      backupF   = backupFrequency (serviceConfig app)
-  doBackup <- do
-    _ <- ensureLogDir logDirPath
-    lastBackup <- getLastBackup logDirPath nameApp
-    case unit backupF of
-      "Hours"  -> return $ (hoursDiff  current lastBackup) > (times backupF)
-      "Days"   -> return $ (daysDiff   current lastBackup) > (times backupF)
-      "Weeks"  -> return $ (weeksDiff  current lastBackup) > (times backupF)
-      "Months" -> return $ (monthsDiff current lastBackup) > (times backupF)
-      _        -> return $ (hoursDiff  current lastBackup) > 8
+  doBackup <- case backupFrequency (serviceConfig app) of
+    Nothing      -> return False
+    Just backupF -> do
+      _ <- ensureLogDir logDirPath
+      lastBackup <- getLastBackup logDirPath nameApp
+      case unit backupF of
+        "Hours"  -> return $ (hoursDiff  current lastBackup) > (times backupF)
+        "Days"   -> return $ (daysDiff   current lastBackup) > (times backupF)
+        "Weeks"  -> return $ (weeksDiff  current lastBackup) > (times backupF)
+        "Months" -> return $ (monthsDiff current lastBackup) > (times backupF)
+        _        -> return $ (hoursDiff  current lastBackup) > 8
   case doBackup of
     True  -> Just <$> saveBackup current app knownHost localHost logDirPath policy progressSecs
     False -> return Nothing
