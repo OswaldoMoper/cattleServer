@@ -96,6 +96,26 @@ Each application has its own `backupFrequency`, and two settings decide when the
 
 Setting `startupDelay` to zero makes the first pass happen at startup. On a machine with no log yet that means backing up immediately, since nothing records a previous backup -- worth knowing before pairing it with `Restart = "always"`.
 
+### One backup, now
+
+```sh
+cattleServer --once my-app /etc/cattleServer.json
+```
+
+Backs up one application whether or not its window has passed, and exits. It is for whatever has to know a backup happened before it does something else -- a deploy that is about to change the machine being backed up, for instance -- and cannot wait for the next pass.
+
+The exit code is the answer, and the three cases are deliberately distinct:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | the backup was recorded: the dump arrived complete, the uploads came with it, and `latest` points at it |
+| `1` | it was attempted and did not work. The reason is on standard error and in the log |
+| `2` | it was never attempted: the command line could not be read, there is no usable configuration, or no application goes by that name |
+
+**`1` and `2` are not the same answer**, and a caller that treats them alike loses the distinction that matters: one says the backup failed, the other says nobody looked.
+
+The run writes to the same log as any other backup, so it also moves that application's window -- the daemon will not immediately repeat what was just copied.
+
 ## What a backup looks like, and what survives
 
 Backups land in a dated tree under `<localHost.userHome>/backup/<app>/`:

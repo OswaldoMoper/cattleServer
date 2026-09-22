@@ -26,8 +26,9 @@ import           System.Exit                  as E
 import           System.Directory             (getModificationTime, removeFile,
                                                setModificationTime)
 import           System.IO                    (BufferMode (LineBuffering),
-                                               hSetBuffering, hSetEncoding,
-                                               stdout, utf8)
+                                               hPutStrLn, hSetBuffering,
+                                               hSetEncoding, stderr, stdout,
+                                               utf8)
 import           Time
 
 -- | Log directory used before any configuration has been read: the sibling
@@ -39,14 +40,59 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   hSetEncoding  stdout utf8
-  configPath <- resolveConfigPath
-  m_service  <- readJSONconfigFrom configPath
-  let logDirPath = maybe fallbackLogDir resolveLogDir m_service
-  logDirExisted <- ensureLogDir logDirPath
-  case logDirExisted of
-    True  -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service has been started correctly"
-    False -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service log folder has been created"
-  recursiveBackup (maybe defaultStartupDelay resolveStartupDelay m_service)
+  parsed <- resolveInvocation
+  case parsed of
+
+    Left err -> do
+      hPutStrLn stderr ("cattleServer: " <> err)
+      hPutStrLn stderr "usage: cattleServer [--once <application>] [<config>]"
+      E.exitWith (E.ExitFailure 2)
+    Right invocation -> do
+      configPath <- resolveConfigPathFor invocation
+      m_service  <- readJSONconfigFrom configPath
+      case invocationMode invocation of
+        Once appName -> runOnce appName configPath m_service >>= E.exitWith
+        Daemon       -> do
+          let logDirPath = maybe fallbackLogDir resolveLogDir m_service
+          logDirExisted <- ensureLogDir logDirPath
+          case logDirExisted of
+            True  -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service has been started correctly"
+            False -> writeLog (serviceLogPath logDirPath) "Started" "The cattleServer service log folder has been created"
+          recursiveBackup configPath (maybe defaultStartupDelay resolveStartupDelay m_service)
+
+-- | Back up one named application now, whether or not its window has passed.
+--
+-- Three outcomes, and they are three exit codes on purpose: a caller that
+-- gates something else on a fresh backup has to tell "it worked" from "it
+-- failed" from "I never got as far as trying".
+--
+-- The backup is recorded in the same log as any other, which also moves the
+-- application's window: a copy is a copy, whoever asked for it.
+runOnce :: String -> FilePath -> Maybe Service -> IO E.ExitCode
+runOnce _ configPath Nothing = do
+  hPutStrLn stderr ("cattleServer: no usable configuration at " <> configPath)
+  return (E.ExitFailure 2)
+runOnce appName _ (Just service) =
+  case filter ((== appName) . name . appConfig) (apps service) of
+    []        -> do
+      hPutStrLn stderr ("cattleServer: no application named " <> appName)
+      hPutStrLn stderr ("  configured: " <> intercalate ", " (map (name . appConfig) (apps service)))
+      return (E.ExitFailure 2)
+    (app : _) -> do
+      let logDirPath = resolveLogDir service
+      _ <- ensureLogDir logDirPath
+
+      migrateApps [app] (localHost service) logDirPath
+      current <- getCurrentTime
+      outcome <- saveBackup current app (knownHosts service) (localHost service)
+                   logDirPath (resolveHostKeyPolicy service) (resolveProgressEvery service)
+      case outcome of
+        BackupRecorded dir -> do
+          putStrLn (appName <> " backed up into " <> dir)
+          return E.ExitSuccess
+        BackupFailed err   -> do
+          hPutStrLn stderr ("cattleServer: " <> appName <> " was not backed up: " <> err)
+          return (E.ExitFailure 1)
 
 -- | Wait, then make one pass over every application, forever.
 --
@@ -54,15 +100,14 @@ main = do
 -- and the configured interval on the way round. The configuration is re-read
 -- on each pass, which is what lets an edit take effect without a restart --
 -- including an edit to the interval itself.
-recursiveBackup :: Int -> IO ()
-recursiveBackup waitMinutes = do
+recursiveBackup :: FilePath -> Int -> IO ()
+recursiveBackup configPath waitMinutes = do
   threadDelay (minutesToMicros waitMinutes)
-  configPath <- resolveConfigPath
   m_config   <- readJSONconfigFrom configPath
   case m_config of
     Nothing   -> do
       writeLog (serviceLogPath fallbackLogDir) "Config error" ("The cattleServer service hasn't been configurated correctly: " <> configPath)
-      recursiveBackup defaultCheckEvery
+      recursiveBackup configPath defaultCheckEvery
     Just software -> do
       let logDirPath = resolveLogDir software
       _ <- ensureLogDir logDirPath
@@ -71,7 +116,7 @@ recursiveBackup waitMinutes = do
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
       verifyApps (apps software) (localHost software) logDirPath (verifyEvery software)
       alertApps  (apps software) logDirPath (alertCommand software)
-      recursiveBackup (resolveCheckEvery software)
+      recursiveBackup configPath (resolveCheckEvery software)
 
 -- | Bring every application's backups into the current layout.
 --

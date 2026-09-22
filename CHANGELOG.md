@@ -68,6 +68,16 @@
 
 ### Scheduling and output
 
+* `--once <application>` backs up one application immediately, whether or not
+  its window has passed, and exits: `0` when the backup was recorded, `1` when
+  it was attempted and did not work, and `2` when it was never attempted --
+  an unreadable command line, no usable configuration, or no application by
+  that name. It is for a caller that has to know a backup happened before it
+  does something else and cannot wait for the next pass. The backup goes into
+  the same log as any other, so it also moves that application's window.
+* An unrecognised option is now an error. Before, the first non-empty argument
+  was taken as the configuration path, so a mistyped flag became a file name
+  and the daemon reported a configuration problem that was really a typo.
 * `checkEvery` and `startupDelay` replace the half hour that was compiled in.
   Both default to it, so nothing changes until they are set.
 * Every line also goes to standard output, with a syslog priority, so

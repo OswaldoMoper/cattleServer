@@ -126,22 +126,66 @@ instance ToJSON Service
 defaultConfigPath :: FilePath
 defaultConfigPath = "./config/cattleServer.json"
 
+-- | What this run was asked to do.
+data Mode
+  = Daemon
+  -- ^ Pass over every application for as long as the process lives.
+  | Once String
+  -- ^ Back up this one application, due or not, and exit saying whether it
+  -- worked. It exists for a caller that has to know a backup happened before
+  -- it does something else and cannot wait for the next window.
+  deriving (Eq, Show, Read)
+
+data Invocation = Invocation
+  { invocationMode       :: Mode
+  , invocationConfigPath :: Maybe FilePath
+  } deriving (Eq, Show, Read)
+
+-- | Parse the command line.
+--
+-- A bare argument is the configuration path, which is how the service has
+-- always been started and what the unit still passes.
+--
+-- An unrecognised option is an error rather than a path. Before this, the
+-- first non-empty argument /was/ the path, so a mistyped flag became a file
+-- name and the daemon reported a configuration problem that was really a
+-- typo.
+parseInvocation :: [String] -> Either String Invocation
+parseInvocation = go (Invocation Daemon Nothing) . filter (not . null)
+  where
+    go acc []         = Right acc
+    go acc (arg:rest)
+      | arg == "--once" =
+          case rest of
+            (appName:more)
+              | not (null appName)
+              , take 1 appName /= "-" -> go acc { invocationMode = Once appName } more
+            _ -> Left "--once needs the name of an application"
+      | take 2 arg == "--" = Left ("unknown option " <> arg)
+      | otherwise =
+          case invocationConfigPath acc of
+            Nothing -> go acc { invocationConfigPath = Just arg } rest
+            Just _  -> Left ("unexpected extra argument " <> arg)
+
+-- | The command line this process was given.
+resolveInvocation :: IO (Either String Invocation)
+resolveInvocation = parseInvocation <$> getArgs
+
 -- | Path of the configuration file.
 --
 -- Resolution order:
 --
---   1. the first non-empty command line argument;
+--   1. the bare command line argument;
 --   2. the @CATTLESERVER_CONFIG@ environment variable;
 --   3. 'defaultConfigPath'.
 --
 -- The argument is for running the service by hand against a scratch file; the
 -- environment variable is for the systemd unit, which keeps @ExecStart@ clean.
-resolveConfigPath :: IO FilePath
-resolveConfigPath = do
-  args <- getArgs
-  case filter (not . null) args of
-    (path:_) -> return path
-    []       -> do
+resolveConfigPathFor :: Invocation -> IO FilePath
+resolveConfigPathFor invocation =
+  case invocationConfigPath invocation of
+    Just path -> return path
+    Nothing   -> do
       m_env <- lookupEnv "CATTLESERVER_CONFIG"
       return $ case m_env of
         Just path | not (null path) -> path
@@ -216,9 +260,6 @@ defaultCheckEvery = 30
 
 defaultStartupDelay :: Int
 defaultStartupDelay = 30
-
-readJSONconfig :: IO (Maybe Service)
-readJSONconfig = resolveConfigPath >>= readJSONconfigFrom
 
 readJSONconfigFrom :: FilePath -> IO (Maybe Service)
 readJSONconfigFrom path = do
