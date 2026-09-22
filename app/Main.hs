@@ -234,7 +234,11 @@ try' action = do
     Right a                 -> Right a
     Left (e :: IOException) -> Left (show e)
 
-saveAppBackup :: App -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO ()
+-- | Back up one application if its window has passed.
+--
+-- 'Nothing' means it was not due yet, which is a different answer from a
+-- backup that was attempted and failed.
+saveAppBackup :: App -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO (Maybe BackupOutcome)
 saveAppBackup app knownHost localHost logDirPath policy progressSecs = do
   current <- getCurrentTime
   let localPath = userHome localHost
@@ -250,13 +254,13 @@ saveAppBackup app knownHost localHost logDirPath policy progressSecs = do
       "Months" -> return $ (monthsDiff current lastBackup) > (times backupF)
       _        -> return $ (hoursDiff  current lastBackup) > 8
   case doBackup of
-    True  -> saveBackup current app knownHost localHost logDirPath policy progressSecs
-    False -> return ()
+    True  -> Just <$> saveBackup current app knownHost localHost logDirPath policy progressSecs
+    False -> return Nothing
 
 recursiveSaveAppBackup :: [App] -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO ()
 recursiveSaveAppBackup [] _ _ _ _ _ = return ()
 recursiveSaveAppBackup (app:rest) knownHost localHost logDirPath policy progressSecs = do
-  saveAppBackup app knownHost localHost logDirPath policy progressSecs
+  _ <- saveAppBackup app knownHost localHost logDirPath policy progressSecs
   recursiveSaveAppBackup rest knownHost localHost logDirPath policy progressSecs
 
 -- | Delete the backups that are older than 'deleteFrequency', oldest first,
@@ -305,9 +309,23 @@ recursiveDeleteAppBackup (app:apps) localHost logDirPath = do
   deleteAppBackup app localHost logDirPath
   recursiveDeleteAppBackup apps localHost logDirPath
 
+-- | What one attempt at a backup ended up doing.
+--
+-- The daemon only has to log, so it can drop this; a caller that has to exit
+-- with a status -- or decide whether something else may proceed -- cannot, and
+-- a line in a log file is not a return value. The text of a failure is the
+-- same one written to the log, so the two can never drift apart.
+data BackupOutcome
+  = BackupRecorded FilePath
+  -- ^ The dump arrived complete, the uploads came with it, and the @latest@
+  -- link points at this directory.
+  | BackupFailed String
+  -- ^ Nothing was recorded, and the previous backup is still the newest one.
+  deriving (Eq, Show)
+
 -- | Login to the server via SSH, backs up the database and downloads the full backup locally via SCP.
 -- Write to the log file during the process.
-saveBackup :: UTCTime -> App -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO ()
+saveBackup :: UTCTime -> App -> String -> Host -> FilePath -> HostKeyPolicy -> Int -> IO BackupOutcome
 saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
   let app         = appConfig theApp
       database    = databaseConfig theApp
@@ -321,13 +339,13 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
   loginResponse <- loginToServer (remoteHost config) (portNumber config) knownHost (keyDirectory config) policy (resolveHostKeys config) (hostKeyFingerprint config) logFilePath
   case loginResponse of
     Left err      -> do
-      writeLog logFilePath "Error" ("Fail to " <> show err)
+      failWith logFilePath "Error" ("Fail to " <> show err)
     Right session -> do
       writeLog logFilePath "Success" "SSH connection started"
       commandResponse <- runSimpleSSH $ databaseBackupInServer session database (remoteHost config)
       case commandResponse of
         Left err     -> do
-          writeLog logFilePath "Error" (show err)
+          failWith logFilePath "Error" (show err)
         Right result -> do
           case resultExit result of
             SSH.ExitSuccess -> writeLog logFilePath "Success" (sqlFile <> " created successfully")
@@ -336,7 +354,7 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
           closeResponse <- runSimpleSSH $ closeSession session
           case closeResponse of
             Left err -> do
-              writeLog logFilePath "Error" (show err)
+              failWith logFilePath "Error" (show err)
             Right () -> do
               writeLog logFilePath "Success" "SSH connection closed"
               case rsyncThere of
@@ -345,7 +363,7 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
                     <> "; install it there, or name where it lives with remoteRsyncPath")
                 _           -> return ()
               case sshCommand (portNumber config) knownHost (keyDirectory config) of
-                Left err  -> writeLog logFilePath "Error" err
+                Left err  -> failWith logFilePath "Error" err
                 Right ssh -> do
                   let appRoot = localPath <> "/backup/" <> appName
                   dir       <- mkBackupDir localPath appName utc
@@ -372,11 +390,11 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
                           return False
                   (uploadExit, uploadErr) <- transferWith logFilePath progressSecs xfer False (structure app)
                   case rsyncSucceeded uploadExit of
-                    False -> writeLog logFilePath "Error" (rsyncDiagnosis uploadExit uploadErr)
+                    False -> failWith logFilePath "Error" (rsyncDiagnosis uploadExit uploadErr)
                     True  -> do
                       writeLog logFilePath "Success" (uploadDirName (structure app) <> " downloaded successfully")
                       case dumpOk of
-                        False -> writeLog logFilePath "Skipped"
+                        False -> failWith logFilePath "Skipped"
                           ("not recording a backup of " <> appName
                             <> ": the database dump did not arrive complete, so "
                             <> latestLinkName <> " still points at the previous one")
@@ -390,6 +408,14 @@ saveBackup utc theApp knownHost localHost logDirPath policy progressSecs = do
                             Left err -> writeLog logFilePath "Error" ("Could not point " <> latestLinkName <> " at " <> dir <> ": " <> err)
                             Right () -> writeLog logFilePath "Success" (latestLinkName <> " now points at " <> dir)
                           writeLog (serviceLogPath logDirPath) "Success" ("The service cattleServer has successfully backed up " <> appName)
+                          return (BackupRecorded dir)
+
+-- | Write the line the log would have got either way, and hand the same text
+-- back as the failure. One call site, so the two cannot say different things.
+failWith :: FilePath -> String -> String -> IO BackupOutcome
+failWith logFilePath level message = do
+  writeLog logFilePath level message
+  return (BackupFailed message)
 
 -- | Establish that the remote host is trusted, then open a session to it.
 --
