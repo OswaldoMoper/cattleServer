@@ -22,6 +22,11 @@
   or scanned on first use and checked against a pinned fingerprint. No policy
   ever replaces an entry that is already there, so a host whose key changed
   still fails.
+* A host that did not end up in `known_hosts` is no longer connected to. The
+  refusal was written to the log and then ignored, so a `strict` policy facing
+  an unknown host announced itself and opened the connection anyway -- libssh2
+  refused it a moment later, so nothing was ever trusted, but the round trip
+  was paid and the log said one thing while the code did another.
 
 ### Backups
 

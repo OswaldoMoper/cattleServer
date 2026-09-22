@@ -196,15 +196,14 @@ appendKnownHosts khFile entries = do
     Right ()                -> Right ()
     Left (e :: IOException) -> Left (show e)
 
--- | Whether the connection may still be attempted.
+-- | Whether the host is now in the file, which is the only state in which the
+-- connection can succeed.
 --
--- Only a disagreement about the host's identity is fatal. A scan that failed
--- or a file that could not be written leaves the connection to fail on its
--- own terms, with libssh2's error in the log rather than ours.
+-- A constructor added later is refused until it says otherwise.
 mayProceed :: Outcome -> Bool
-mayProceed (FingerprintMismatch _) = False
-mayProceed (DeclaredUnparseable _) = False
-mayProceed _                       = True
+mayProceed AlreadyKnown = True
+mayProceed (Added _ _)  = True
+mayProceed _            = False
 
 -- | Short tag for the log's message column.
 outcomeTag :: Outcome -> String
