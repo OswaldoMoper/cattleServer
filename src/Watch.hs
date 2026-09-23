@@ -12,20 +12,36 @@ module Watch
   , verdictDescription
   , isTrouble
   , checkSite
+  , withCertificate
+  , daysLeft
   ) where
 
-import           Control.Exception     (IOException, try)
-import qualified Data.ByteString.Char8 as C8
-import           Data.List             (intercalate, nub)
-import           Data.Maybe            (catMaybes)
-import           Network.HTTP.Client   (HttpException (..), Manager, Request,
-                                        httpNoBody, parseRequest, redirectCount,
-                                        requestHeaders, responseStatus)
-import           Network.HTTP.Types    (statusCode)
-import           Network.Socket        (AddrInfo (..), NameInfoFlag (..),
-                                        SockAddr, SocketType (Stream),
-                                        defaultHints, getAddrInfo, getNameInfo)
-import           System.IO.Error       (ioeGetErrorString)
+import           Control.Exception        (IOException, SomeException,
+                                           bracket, displayException, try)
+import qualified Data.ByteString.Char8    as C8
+import           Data.Default.Class       (def)
+import           Data.Hourglass           (Elapsed (..), Seconds (..),
+                                           timeGetElapsed)
+import           Data.IORef               (newIORef, readIORef, writeIORef)
+import           Data.List                (intercalate, isPrefixOf, nub)
+import           Data.Maybe               (catMaybes)
+import           Data.Time.Clock          (UTCTime, diffUTCTime)
+import           Data.Time.Clock.POSIX    (posixSecondsToUTCTime)
+import           Data.X509                (CertificateChain (..), certValidity,
+                                           getCertificate)
+import           Network.HTTP.Client      (HttpException (..), Manager, Request,
+                                           httpNoBody, parseRequest,
+                                           redirectCount, requestHeaders,
+                                           responseStatus)
+import           Network.HTTP.Types       (statusCode)
+import           Network.Socket           (AddrInfo (..), NameInfoFlag (..),
+                                           SockAddr, SocketType (Stream), close,
+                                           connect, defaultHints, getAddrInfo,
+                                           getNameInfo, openSocket)
+import qualified Network.TLS              as TLS
+import           Network.TLS.Extra.Cipher (ciphersuite_default)
+import           System.IO.Error          (ioeGetErrorString)
+import           System.Timeout           (timeout)
 
 -- | What the site turned out to be doing. One constructor per person who
 -- would have to act on it.
@@ -41,17 +57,25 @@ data Verdict
   -- a proxy, a certificate, a firewall.
   | AddressDoesNotAnswer String
   -- ^ Not the machine either. Whoever operates it.
+  | CertificateExpiresSoon Int Integer
+  -- ^ It answered, with this status, on a certificate this many days from
+  -- expiry. The renewal has been failing unseen. Whoever operates the machine.
+  | CertificateNotRead Int String
+  -- ^ It answered, with this status, but its certificate could not be read,
+  -- so its expiry is unknown. Not trouble: the visitor got through.
   | SiteIsUp Int
   -- ^ The status the name returned.
   deriving (Eq, Show)
 
 -- | Whether a verdict is one somebody has to do something about.
 isTrouble :: Verdict -> Bool
-isTrouble (SiteIsUp code) = code >= 400
-isTrouble _               = True
+isTrouble (SiteIsUp code)           = code >= 400
+isTrouble (CertificateNotRead _ _)  = False
+isTrouble _                         = True
 
 verdictTag :: Verdict -> String
 verdictTag (SiteIsUp code) | code < 400 = "Site up"
+verdictTag (CertificateNotRead _ _)     = "Site up"
 verdictTag _                            = "Site error"
 
 verdictDescription :: String -> String -> Verdict -> String
@@ -67,6 +91,12 @@ verdictDescription url addr verdict = case verdict of
       <> " -- the machine does, so this is the edge"
   AddressDoesNotAnswer err ->
     addr <> " does not answer either: " <> err <> " -- this one is the machine"
+  CertificateExpiresSoon code days ->
+    url <> " answered " <> show code <> ", but its certificate expires in "
+      <> show days <> " day(s) -- the renewal is failing on the machine"
+  CertificateNotRead code err ->
+    url <> " answered " <> show code
+      <> "; its certificate could not be read, so its expiry is unknown: " <> err
   SiteIsUp code ->
     url <> " answered " <> show code
   where
@@ -107,6 +137,58 @@ checkSite manager url addr expected = do
 machineAnswers :: Manager -> String -> String -> IO (Either String Int)
 machineAnswers manager addr host =
   getStatus manager ("http://" <> addr <> "/") (noRedirects . withHost host)
+
+-- | Refine a site that answered over https with how long its certificate has
+-- left. Every other verdict passes through unchanged.
+--
+-- The certificate is read on a connection of its own. The request that
+-- answered already validated the chain, so this one trusts whatever it is
+-- shown: it reads a date, it does not decide whether to believe the site.
+withCertificate :: UTCTime -> Int -> String -> Verdict -> IO Verdict
+withCertificate now minDays url verdict = case verdict of
+  SiteIsUp code | code < 400, "https://" `isPrefixOf` url -> do
+    expiry <- certificateExpiry (hostOf url) (portOf url)
+    return $ case expiry of
+      Left err -> CertificateNotRead code err
+      Right notAfter
+        | left < fromIntegral minDays -> CertificateExpiresSoon code left
+        | otherwise                   -> verdict
+        where left = daysLeft now notAfter
+  _ -> return verdict
+
+-- | Whole days from one instant to another, rounded down.
+daysLeft :: UTCTime -> UTCTime -> Integer
+daysLeft now later = floor (diffUTCTime later now / 86400)
+
+-- | When the certificate a host presents stops being valid.
+certificateExpiry :: String -> String -> IO (Either String UTCTime)
+certificateExpiry host port = do
+  seen <- newIORef Nothing
+  let hooks = def
+        { TLS.onServerCertificate = \_ _ _ chain -> writeIORef seen (Just chain) >> return [] }
+      params = (TLS.defaultParamsClient host "")
+        { TLS.clientHooks     = hooks
+        , TLS.clientSupported = def { TLS.supportedCiphers = ciphersuite_default }
+        }
+      hints = defaultHints { addrSocketType = Stream }
+      handshake = do
+        infos <- getAddrInfo (Just hints) (Just host) (Just port)
+        case infos of
+          []       -> ioError (userError "no addresses")
+          (info:_) -> bracket (openSocket info) close $ \sock -> do
+            connect sock (addrAddress info)
+            ctx <- TLS.contextNew sock params
+            TLS.handshake ctx
+            TLS.bye ctx
+  attempt <- try (timeout (10 * 1000000) handshake)
+  chain <- readIORef seen
+  return $ case (attempt, chain) of
+    (_, Just (CertificateChain (leaf:_))) ->
+      let Elapsed (Seconds s) = timeGetElapsed (snd (certValidity (getCertificate leaf)))
+      in Right (posixSecondsToUTCTime (fromIntegral s))
+    (Right Nothing, _)                   -> Left "timed out after 10 seconds"
+    (Left (e :: SomeException), _)       -> Left (firstLine (displayException e))
+    (Right (Just ()), _)                 -> Left "the server presented no certificate"
 
 -- | The addresses a name answers with, or why it answers with none.
 addressesOf :: String -> IO (Either String [String])
@@ -150,11 +232,19 @@ describeHttp (InvalidUrlException url why)    = url <> ": " <> why
 
 hostOf :: String -> String
 hostOf = takeWhile (\c -> c /= '/' && c /= ':') . dropScheme
-  where
-    dropScheme s
-      | take 8 s == "https://" = drop 8 s
-      | take 7 s == "http://"  = drop 7 s
-      | otherwise              = s
+
+-- | The port a URL names, or the one its scheme implies.
+portOf :: String -> String
+portOf u = case dropWhile (/= ':') (takeWhile (/= '/') (dropScheme u)) of
+  ':' : p@(_:_)                 -> p
+  _ | "http://" `isPrefixOf` u -> "80"
+    | otherwise                -> "443"
+
+dropScheme :: String -> String
+dropScheme s
+  | take 8 s == "https://" = drop 8 s
+  | take 7 s == "http://"  = drop 7 s
+  | otherwise              = s
 
 firstLine :: String -> String
 firstLine s = case filter (not . null) (lines s) of

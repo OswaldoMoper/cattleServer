@@ -56,6 +56,16 @@ let
           the gap a deploy or a reboot leaves does not raise one on its own.
         '';
       };
+      certificateDays = mkOption {
+        type = types.ints.unsigned;
+        default = 14;
+        description = ''
+          Days of validity below which a certificate that still works counts
+          as a bad check. Only asked of an https URL that answered. Let's
+          Encrypt renews at thirty days, so fourteen means the renewal has
+          been failing for two weeks.
+        '';
+      };
     };
   };
 

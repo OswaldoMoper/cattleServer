@@ -103,6 +103,9 @@ data Watch = Watch
   , failures  :: Maybe Int
   -- ^ Consecutive bad checks before alerting. A deploy or a reboot leaves a
   -- short gap that is not a fault.
+  , certificateDays :: Maybe Int
+  -- ^ Days of validity below which a certificate that still works is
+  -- reported. Only asked of an https URL that answered.
   } deriving (Generic, Show, Read)
 
 instance FromJSON Watch
@@ -317,6 +320,16 @@ resolveWatchFailures = max 1 . fromMaybe defaultWatchFailures . failures
 
 defaultWatchFailures :: Int
 defaultWatchFailures = 2
+
+-- | Days of validity below which a watch reports the certificate.
+--
+-- Let's Encrypt renews thirty days before expiry, so fourteen left means the
+-- renewal has been failing for two weeks rather than that it is due.
+resolveCertificateDays :: Watch -> Int
+resolveCertificateDays = max 0 . fromMaybe defaultCertificateDays . certificateDays
+
+defaultCertificateDays :: Int
+defaultCertificateDays = 14
 
 -- | Read the configuration, or say what is wrong with it.
 --

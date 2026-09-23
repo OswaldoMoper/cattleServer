@@ -106,6 +106,13 @@
   the gap a deploy or a reboot leaves does not raise one. The alert is sent
   once when the count is reached rather than once per pass, and a good check
   clears it.
+* A site that answers on a certificate close to expiry is a bad check of its
+  own, because it is the one failure that stays invisible until the day it is
+  total: every request keeps succeeding while the renewal keeps failing.
+  `certificateDays`, fourteen by default, is how close it may get. The date is
+  read on a separate connection that trusts whatever it is shown, since the
+  request that answered already validated the chain; a certificate that
+  cannot be read is logged and is not a bad check.
 * `backupFrequency` may now be left out of a Nix-declared application, which
   the Haskell side had already allowed: an application with a `watch` and no
   `backupFrequency` is watched and never copied. One that asks for neither is

@@ -33,7 +33,8 @@ import           System.IO                    (BufferMode (LineBuffering),
                                                stdout, utf8)
 import           Time
 import           Watch                        (checkSite, isTrouble,
-                                               verdictDescription, verdictTag)
+                                               verdictDescription, verdictTag,
+                                               withCertificate)
 
 -- | Log directory used before any configuration has been read: the sibling
 -- directory the service has always fallen back to.
@@ -225,7 +226,9 @@ watchApps manager theApps logDirPath command = mapM_ one theApps
           let nameApp     = name (appConfig theApp)
               logFilePath = appLogPath logDirPath nameApp
               addr        = hostName (remoteHost (serviceConfig theApp))
+          now     <- getCurrentTime
           verdict <- checkSite manager (url w) addr (addresses w)
+                       >>= withCertificate now (resolveCertificateDays w) (url w)
           writeLog logFilePath (verdictTag verdict)
                    (verdictDescription (url w) addr verdict)
           case isTrouble verdict of

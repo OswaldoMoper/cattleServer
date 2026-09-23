@@ -182,10 +182,11 @@ watch = {
   url       = "https://example.org";
   addresses = [ "203.0.113.10" ];
   failures  = 2;
+  certificateDays = 14;
 };
 ```
 
-What it finds is one of five things, and they are five because each one belongs to somebody different:
+What it finds is one of six things, and they are six because each one belongs to somebody different:
 
 | What it found | Whose it is |
 | --- | --- |
@@ -193,7 +194,10 @@ What it finds is one of five things, and they are five because each one belongs 
 | It resolves somewhere else | The DNS, or whatever was put in front of it |
 | The name does not answer, but the machine does | The edge: a proxy, a certificate, a firewall |
 | Neither answers | Whoever operates the machine |
+| It answered, on a certificate close to expiry | Whoever operates the machine: the renewal is failing |
 | It answered | Nobody, unless the status is 400 or worse |
+
+`certificateDays` is how close to expiry a certificate that still works may get before it counts as a bad check, fourteen by default: Let's Encrypt renews at thirty, so fourteen left means the renewal has been failing for two weeks. It is asked only of an `https` URL that answered, on a connection of its own that reads the date and trusts nothing -- the request that answered already validated the chain. A certificate that could not be read is logged with the reason and is not a bad check, since the visitor got through. One that has already expired fails the request itself, and is reported as the name not answering.
 
 Telling the third from the fourth is the whole reason to watch from another machine, and it is why the machine is asked over plain HTTP: a certificate is issued to the name and never to the address, so asking the address over HTTPS fails however healthy the machine is, and would blame it for what the edge is doing. The limit that follows is worth knowing: a machine that serves only 443 is reported as not answering. Redirects are not followed either -- a 301 to the name is the machine answering, and following it would put the name back under test.
 
