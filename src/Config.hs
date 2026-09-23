@@ -8,6 +8,7 @@ import           Control.Exception        (IOException, try)
 import           Data.Aeson
 import           Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy     as B
+import           Data.Char                (isAsciiLower, isDigit)
 import           Data.List                (intercalate)
 import           Data.Maybe               (fromMaybe, isNothing)
 import qualified Data.Text                as T
@@ -89,6 +90,14 @@ data Config = Config
   , watch              :: Maybe Watch
   -- ^ Whether this application's site is watched, and what is expected of it.
   -- Absent never watches.
+  , uploadsOwner       :: Maybe String
+  -- ^ @user:group@ a restored upload is given. Setting it restores through
+  -- @sudo -n rsync@, since only root can give a file away. Absent restores as
+  -- the remote user, owning what it writes.
+  , uploadsMode        :: Maybe String
+  -- ^ rsync @--chmod@ modes for a restored upload, such as @D2775,F664@. The
+  -- copy is private on this side, so without it a restored file keeps
+  -- whatever mode the copy happens to hold.
   } deriving (Generic, Show, Read)
 
 -- | What a site is expected to be doing, for the watch to compare against.
@@ -162,6 +171,36 @@ data Mode
   -- ^ Back up this one application, due or not, and exit saying whether it
   -- worked. It exists for a caller that has to know a backup happened before
   -- it does something else and cannot wait for the next window.
+  | Restore RestoreRequest
+  -- ^ Put part of one application's copy back on its host, and exit saying
+  -- whether it went back.
+  deriving (Eq, Show, Read)
+
+-- | Which copy of which application to put back, and which part of it.
+data RestoreRequest = RestoreRequest
+  { restoreApp  :: String
+  , restorePart :: RestorePart
+  , restoreFrom :: Maybe FilePath
+  -- ^ The backup directory to restore from. Absent is the application's
+  -- @latest@.
+  } deriving (Eq, Show, Read)
+
+data RestorePart
+  = RestoreDatabase DatabaseGuard
+  -- ^ Replace the whole database with the copy's dump.
+  | RestoreUploads
+  -- ^ Put back the uploads the host no longer has. Nothing it has is
+  -- replaced, and nothing is deleted.
+  deriving (Eq, Show, Read)
+
+-- | When a database restore may go ahead.
+data DatabaseGuard
+  = OnlyIfEmpty [String]
+  -- ^ Only while every one of these tables is empty: they are what says the
+  -- database is new rather than behind.
+  | ReplaceWhatIsThere
+  -- ^ Whatever the database holds. It loses what was written after the copy,
+  -- so it is only ever asked for by name.
   deriving (Eq, Show, Read)
 
 data Invocation = Invocation
@@ -189,11 +228,65 @@ parseInvocation = go (Invocation Daemon Nothing) . filter (not . null)
               | not (null appName)
               , take 1 appName /= "-" -> go acc { invocationMode = Once appName } more
             _ -> Left "--once needs the name of an application"
+      | arg == "--restore" =
+          case rest of
+            (appName:more)
+              | not (null appName)
+              , take 1 appName /= "-" -> do
+                  (request, remaining) <- parseRestore appName more
+                  go acc { invocationMode = Restore request } remaining
+            _ -> Left "--restore needs the name of an application"
       | take 2 arg == "--" = Left ("unknown option " <> arg)
       | otherwise =
           case invocationConfigPath acc of
             Nothing -> go acc { invocationConfigPath = Just arg } rest
             Just _  -> Left ("unexpected extra argument " <> arg)
+
+-- | The options that follow @--restore \<app\>@, up to the first argument that
+-- is not one of them.
+--
+-- Exactly one of @--database@ and @--uploads@. A database restore replaces
+-- everything, so it has to say when that is allowed: @--empty@ names the
+-- tables whose emptiness makes it safe, @--replace@ says to replace whatever
+-- is there. Neither is a default, so a restore that would run over live data
+-- is never what a missing option means.
+parseRestore :: String -> [String] -> Either String (RestoreRequest, [String])
+parseRestore appName = loop Nothing Nothing False Nothing
+  where
+    loop part empties replace from args = case args of
+      ("--database" : more) -> pick part True  >>= \p -> loop p empties replace from more
+      ("--uploads"  : more) -> pick part False >>= \p -> loop p empties replace from more
+      ("--empty" : ts : more)
+        | take 1 ts /= "-"  -> loop part (Just (splitOn ',' ts)) replace from more
+      ["--empty"]           -> Left "--empty needs a comma-separated list of tables"
+      ("--replace" : more)  -> loop part empties True from more
+      ("--from" : dir : more)
+        | take 1 dir /= "-" -> loop part empties replace (Just dir) more
+      ["--from"]            -> Left "--from needs a backup directory"
+      remaining             -> finish part empties replace from remaining
+
+    pick Nothing  isDatabase = Right (Just isDatabase)
+    pick (Just _) _          = Left "--restore takes one of --database and --uploads, not both"
+
+    finish part empties replace from remaining = case part of
+      Nothing    -> Left "--restore needs --database or --uploads"
+      Just False
+        | Just _ <- empties -> Left "--empty only applies to --database"
+        | replace           -> Left "--replace only applies to --database"
+        | otherwise         -> Right (RestoreRequest appName RestoreUploads from, remaining)
+      Just True -> case (filter (not . null) <$> empties, replace) of
+        (Just _, True)   -> Left "--empty and --replace contradict each other: one restores only a new database, the other any"
+        (Nothing, True)  -> Right (RestoreRequest appName (RestoreDatabase ReplaceWhatIsThere) from, remaining)
+        (Nothing, False) -> Left "--restore --database needs --empty <table,...> (only while those tables are empty) or --replace (whatever is there)"
+        (Just [], False) -> Left "--empty needs at least one table"
+        (Just ts, False)
+          | all validTable ts -> Right (RestoreRequest appName (RestoreDatabase (OnlyIfEmpty ts)) from, remaining)
+          | otherwise         -> Left ("--empty takes plain table names: " <> unwords (filter (not . validTable) ts))
+
+    validTable t = all (\c -> isAsciiLower c || isDigit c || c == '_') t
+    splitOn c s = case break (== c) s of
+      (a, [])     -> [a]
+      (a, _:rest) -> a : splitOn c rest
 
 -- | The command line this process was given.
 resolveInvocation :: IO (Either String Invocation)

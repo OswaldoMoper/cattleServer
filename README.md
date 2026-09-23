@@ -251,7 +251,26 @@ What differs is only how much space arrives with it:
 | `tar` | records the links and recreates them on extraction |
 | `scp -r`, a file manager, a network share | full copies |
 
-To restore the database:
+`--restore` puts a copy back on the host it came from, one part at a time, because the two are lost separately:
+
+```sh
+cattleServer --restore <application> --database --empty customer [--from <backup>] [<config>]
+cattleServer --restore <application> --database --replace       [--from <backup>] [<config>]
+cattleServer --restore <application> --uploads                   [--from <backup>] [<config>]
+```
+
+Each uses `latest` unless `--from` names another backup, and each checks it against its manifest before anything is sent. The exit code says how it went, as with `--once`: 0 it went back, 1 it was attempted and did not, 2 it was never attempted.
+
+| Part | What it does | What it never does |
+| --- | --- | --- |
+| `--database` | replaces the whole database with the copy's dump: checks the `--empty` tables, drops the `public` schema and loads the dump, all in one transaction | run over a database where any `--empty` table has rows, unless `--replace` was asked for instead. That is what says the database is new -- recreated after a major upgrade, say -- rather than merely behind, and replacing one that is behind loses whatever was written after the copy |
+| `--uploads` | puts back what the host no longer has, with `uploadsOwner` and `uploadsMode` if they are set | replace a file the host still has, delete anything, or touch a directory the host still has |
+
+`--database` has to say when it may go ahead, and neither answer is a default. `--empty` names tables rather than asking for an empty database: an application that starts on a new database usually seeds some rows of its own, so "no rows anywhere" would refuse exactly the case this exists for. `--replace` goes ahead whatever the database holds, which loses everything written after the copy -- it is the one to use, by hand, when a database is behind rather than new. Either way, stop the application first, or it may write into the database halfway through.
+
+The uploads go back in two passes: a dry run lists what would be created, and the second pass sends that list and nothing else. `--ignore-existing` on its own still updates the directories that exist, so an owner meant for the restored files would land on the directory the host already has at the top. An owner needs root on the remote, so `uploadsOwner` runs rsync there through `sudo -n`, which fails rather than waits for a password.
+
+By hand, the database is:
 
 ```sh
 psql -U <role> -d <database> < latest/<database>.sql

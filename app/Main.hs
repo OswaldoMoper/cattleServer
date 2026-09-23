@@ -23,6 +23,7 @@ import           Progress                     (parseProgress,
                                                progressWorthReporting,
                                                renderFinished, renderRunning,
                                                statsWorthKeeping, throttled)
+import           Restore                      (runRestore)
 import           System.Directory            (getModificationTime, removeFile,
                                                setModificationTime)
 import           System.Exit                  as E
@@ -52,12 +53,14 @@ main = do
     Left err -> do
       hPutStrLn stderr ("cattleServer: " <> err)
       hPutStrLn stderr "usage: cattleServer [--once <application>] [<config>]"
+      hPutStrLn stderr "       cattleServer --restore <application> (--database (--empty <table,...> | --replace) | --uploads) [--from <backup>] [<config>]"
       E.exitWith (E.ExitFailure 2)
     Right invocation -> do
       configPath <- resolveConfigPathFor invocation
       e_service  <- readJSONconfigFrom configPath
       case invocationMode invocation of
         Once appName -> runOnce appName e_service >>= E.exitWith
+        Restore req  -> runRestore req e_service >>= E.exitWith
         Daemon       -> do
           let logDirPath = either (const fallbackLogDir) resolveLogDir e_service
           logDirExisted <- ensureLogDir logDirPath

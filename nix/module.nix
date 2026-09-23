@@ -132,6 +132,26 @@ let
           here avoids having to edit a shell profile on the other machine.
         '';
       };
+      uploadsOwner = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "admin:uploads";
+        description = ''
+          `user:group` that `--restore --uploads` gives the files it puts
+          back. Setting it runs rsync on the remote through `sudo -n`, since
+          only root can give a file away; null restores as the remote user.
+        '';
+      };
+      uploadsMode = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "D2775,F664";
+        description = ''
+          rsync `--chmod` modes for the files `--restore --uploads` puts back.
+          The copy on this side is private, so without it a restored file
+          keeps whatever mode the copy happens to hold.
+        '';
+      };
       alertAfter = mkOption {
         type = types.nullOr types.ints.positive;
         default = null;

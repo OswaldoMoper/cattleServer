@@ -83,6 +83,29 @@
 * `alertAfter` and `alertCommand` run something when an application has gone
   too long without a successful backup. Logging is not warning.
 
+### Putting a copy back
+
+* `--restore <app> --database --empty <table,...>` replaces the database with
+  the copy's dump, but only while every named table is empty -- a database
+  that is new, rather than one that is merely behind. The check, dropping the
+  `public` schema and loading the dump are one transaction, so a refusal or a
+  dump that fails halfway leaves the database as it was. The tables have to
+  be named: an application that starts on a new database seeds rows of its
+  own, so "no rows anywhere" would refuse the case this exists for.
+* `--restore <app> --database --replace` goes ahead whatever the database
+  holds, losing what was written after the copy. It is for a database that is
+  behind rather than new, and it is never what a missing option means:
+  `--database` without one of the two is refused.
+* `--restore <app> --uploads` puts back what the host no longer has and
+  nothing else: no file it has is replaced and nothing is deleted. It goes in
+  two passes, a dry run that lists what would be created and a transfer of
+  exactly that list, because `--ignore-existing` alone still updates the
+  directories that exist. `uploadsOwner` and `uploadsMode` say what the
+  restored files are given, since the copy on this side is private.
+* Either one checks the copy against its manifest before sending anything,
+  and exits 0, 1 or 2 like `--once`. `--from` names a backup other than
+  `latest`.
+
 ### Watching the site
 
 * `watch` asks an application's site each pass the way a visitor would, and
