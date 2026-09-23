@@ -83,6 +83,34 @@
 * `alertAfter` and `alertCommand` run something when an application has gone
   too long without a successful backup. Logging is not warning.
 
+### Watching the site
+
+* `watch` asks an application's site each pass the way a visitor would, and
+  alerts through the same `alertCommand`. A backup proves the machine answered
+  `ssh`; it says nothing about whether anyone can open the site, and the two
+  fail separately -- a certificate expires, a proxy stops forwarding, a name
+  falls out of its zone, and every backup keeps succeeding throughout.
+* The verdict separates five states rather than reporting "down", because each
+  one belongs to somebody else: the name does not resolve, it resolves
+  somewhere else, the name does not answer but the machine does, neither
+  answers, or it answered. Telling the third from the fourth is the reason to
+  ask from another machine at all.
+* The machine is asked over plain HTTP, since a certificate is issued to the
+  name and never to the address: asking the address over HTTPS fails however
+  healthy the machine is, and blames it for what the edge is doing. So a
+  machine that serves only 443 is reported as not answering.
+* `addresses` says what the name is expected to resolve to, and leaving it out
+  accepts any -- which is what a site behind a proxy needs, because it resolves
+  to the proxy's network rather than to the machine.
+* `failures`, two by default, is how many consecutive bad checks it takes, so
+  the gap a deploy or a reboot leaves does not raise one. The alert is sent
+  once when the count is reached rather than once per pass, and a good check
+  clears it.
+* `backupFrequency` may now be left out of a Nix-declared application, which
+  the Haskell side had already allowed: an application with a `watch` and no
+  `backupFrequency` is watched and never copied. One that asks for neither is
+  still refused when the configuration is read, by name.
+
 ### Scheduling and output
 
 * `--once <application>` backs up one application immediately, whether or not

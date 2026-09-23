@@ -15,6 +15,8 @@ import           KnownHosts                   (Request (..), ensureKnownHost,
                                                outcomeTag)
 import           Manifest                     (manifestName, verifyManifest,
                                                writeManifest)
+import           Network.HTTP.Client          (Manager)
+import           Network.HTTP.Client.TLS      (newTlsManager)
 import           Network.SSH.Client.SimpleSSH as SSH
 import           Proc                         (runTool, runToolStreaming,
                                                shellQuote)
@@ -22,14 +24,16 @@ import           Progress                     (parseProgress,
                                                progressWorthReporting,
                                                renderFinished, renderRunning,
                                                statsWorthKeeping, throttled)
-import           System.Exit                  as E
 import           System.Directory             (getModificationTime, removeFile,
                                                setModificationTime)
+import           System.Exit                  as E
 import           System.IO                    (BufferMode (LineBuffering),
                                                hPutStrLn, hSetBuffering,
-                                               hSetEncoding, stderr, stdout,
-                                               utf8)
+                                               hSetEncoding, readFile', stderr,
+                                               stdout, utf8)
 import           Time
+import           Watch                        (checkSite, isTrouble,
+                                               verdictDescription, verdictTag)
 
 -- | Log directory used before any configuration has been read: the sibling
 -- directory the service has always fallen back to.
@@ -61,7 +65,8 @@ main = do
           case e_service of
             Left err -> writeLog (serviceLogPath logDirPath) "Config error" err
             Right _  -> return ()
-          recursiveBackup configPath (either (const defaultStartupDelay) resolveStartupDelay e_service)
+          manager <- newTlsManager
+          recursiveBackup manager configPath (either (const defaultStartupDelay) resolveStartupDelay e_service)
 
 -- | Back up one named application now, whether or not its window has passed.
 --
@@ -103,14 +108,14 @@ runOnce appName (Right service) =
 -- and the configured interval on the way round. The configuration is re-read
 -- on each pass, which is what lets an edit take effect without a restart --
 -- including an edit to the interval itself.
-recursiveBackup :: FilePath -> Int -> IO ()
-recursiveBackup configPath waitMinutes = do
+recursiveBackup :: Manager -> FilePath -> Int -> IO ()
+recursiveBackup manager configPath waitMinutes = do
   threadDelay (minutesToMicros waitMinutes)
   e_config   <- readJSONconfigFrom configPath
   case e_config of
     Left err   -> do
       writeLog (serviceLogPath fallbackLogDir) "Config error" err
-      recursiveBackup configPath defaultCheckEvery
+      recursiveBackup manager configPath defaultCheckEvery
     Right software -> do
       let logDirPath = resolveLogDir software
       _ <- ensureLogDir logDirPath
@@ -119,7 +124,8 @@ recursiveBackup configPath waitMinutes = do
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
       verifyApps (apps software) (localHost software) logDirPath (verifyEvery software)
       alertApps  (apps software) logDirPath (alertCommand software)
-      recursiveBackup configPath (resolveCheckEvery software)
+      watchApps manager (apps software) logDirPath (alertCommand software)
+      recursiveBackup manager configPath (resolveCheckEvery software)
 
 -- | Bring every application's backups into the current layout.
 --
@@ -204,6 +210,61 @@ alertApps theApps logDirPath (Just command) = mapM_ one theApps
             Left _   -> writeFile (alertMarkerPath logDirPath nameApp) ""
         _ -> writeLog logFilePath "Error" ("the alert command failed: " <> err)
 
+-- | Check every watched site, and alert once an outage has lasted.
+--
+-- A site and the machine behind it fail separately, so the alert says which
+-- of the two it was: that is the whole point of watching from here rather
+-- than asking the machine whether it is alive.
+watchApps :: Manager -> [App] -> FilePath -> Maybe String -> IO ()
+watchApps manager theApps logDirPath command = mapM_ one theApps
+  where
+    one theApp =
+      case watch (serviceConfig theApp) of
+        Nothing -> return ()
+        Just w  -> do
+          let nameApp     = name (appConfig theApp)
+              logFilePath = appLogPath logDirPath nameApp
+              addr        = hostName (remoteHost (serviceConfig theApp))
+          verdict <- checkSite manager (url w) addr (addresses w)
+          writeLog logFilePath (verdictTag verdict)
+                   (verdictDescription (url w) addr verdict)
+          case isTrouble verdict of
+            False -> clearMarker (watchMarkerPath logDirPath nameApp)
+            True  -> do
+              n <- bumpFailures (watchMarkerPath logDirPath nameApp)
+
+              case n == resolveWatchFailures w of
+                False -> return ()
+                True  -> raise nameApp logFilePath w verdict addr n
+
+    raise nameApp logFilePath w verdict addr n =
+      case command of
+        Nothing  -> return ()
+        Just cmd -> do
+          let body = "cattleServer: " <> nameApp <> " has failed its last "
+                       <> show n <> " site checks.\n\n"
+                       <> verdictDescription (url w) addr verdict <> "\n"
+          (code, _, err) <- runTool "sh" ["-c", cmd] body
+          case code of
+            E.ExitSuccess -> writeLog logFilePath "Alert"
+              (nameApp <> " failed " <> show n <> " site checks; the alert command was run")
+            _ -> writeLog logFilePath "Error" ("the alert command failed: " <> err)
+
+-- | How many bad checks in a row, counting this one.
+bumpFailures :: FilePath -> IO Int
+bumpFailures path = do
+  previous <- try' (readFile' path)
+  let n = case previous of
+            Right s | [(k, _)] <- reads s -> k
+            _                             -> 0 :: Int
+  written <- try' (writeFile path (show (n + 1)))
+  case written of
+    Right () -> return (n + 1)
+    Left _   -> return (n + 1)
+
+watchMarkerPath :: FilePath -> String -> FilePath
+watchMarkerPath logDirPath nameApp = logDirPath <> "/." <> nameApp <> ".watch"
+
 alertMarkerPath :: FilePath -> String -> FilePath
 alertMarkerPath logDirPath nameApp = logDirPath <> "/" <> nameApp <> ".alerted"
 
@@ -266,7 +327,7 @@ leastRecentlyChecked :: [FilePath] -> IO (Maybe (UTCTime, FilePath))
 leastRecentlyChecked dirs = do
   stamped <- mapM stamp dirs
   return $ case sortOn fst [ (t, d) | Just (t, d) <- stamped ] of
-    []      -> Nothing
+    []         -> Nothing
     (oldest:_) -> Just oldest
   where
     stamp dir = do

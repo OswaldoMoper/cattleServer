@@ -29,6 +29,36 @@ let
     };
   };
 
+  watchOpts = {
+    options = {
+      url = mkOption {
+        type = types.str;
+        example = "https://example.org";
+        description = "The address a visitor types, scheme included.";
+      };
+      addresses = mkOption {
+        type = types.nullOr (types.listOf types.str);
+        default = null;
+        example = literalExpression ''[ "203.0.113.10" ]'';
+        description = ''
+          The addresses the name is allowed to answer with. Null accepts any.
+
+          A site behind a proxy needs it left out: it resolves to the proxy's
+          network rather than to the machine, so naming the machine's address
+          would raise an alert on every single pass.
+        '';
+      };
+      failures = mkOption {
+        type = types.ints.positive;
+        default = 2;
+        description = ''
+          Consecutive bad checks before `alertCommand` is run. Two, so that
+          the gap a deploy or a reboot leaves does not raise one on its own.
+        '';
+      };
+    };
+  };
+
   connectionOpts = {
     freeformType = jsonFormat.type;
     options = {
@@ -41,8 +71,28 @@ let
         '';
       };
       portNumber      = mkOption { type = types.port; default = 22; };
-      backupFrequency = mkOption { type = types.submodule unitTimeOpts; };
+      backupFrequency = mkOption {
+        type = types.nullOr (types.submodule unitTimeOpts);
+        default = null;
+        description = ''
+          How often this application is backed up. Null never backs it up,
+          which only makes sense alongside `watch`: an application that asks
+          for neither is refused when the configuration is read.
+        '';
+      };
       deleteFrequency = mkOption { type = types.submodule unitTimeOpts; };
+      watch = mkOption {
+        type = types.nullOr (types.submodule watchOpts);
+        default = null;
+        example = literalExpression ''{ url = "https://example.org"; }'';
+        description = ''
+          Whether this application's site is checked each pass, the way a
+          visitor would. Null never checks it.
+
+          A backup only proves the machine answered ssh. Whether anybody can
+          open the site is a separate question, and gets its own answer.
+        '';
+      };
       hostKeys = mkOption {
         type = types.listOf types.str;
         default = [ ];

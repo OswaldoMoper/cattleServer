@@ -147,6 +147,7 @@ Three different things get confused with each other, and only one of them is wha
 | A file deleted or ruined at the source | Several generations: `deleteFrequency` and `keepAtLeast` |
 | A transfer cut halfway | The completeness check on the dump |
 | Backups quietly not happening at all | `alertAfter` and `alertCommand` |
+| The site being gone while the machine is fine | `watch` and `alertCommand` |
 | One unreachable host stopping all the others | `connectTimeout`, 30s by default |
 | Noticing a file has gone bad | `verifyEvery`, against the manifest |
 | **A file going bad on this disk** | **Only an independent lineage** -- see below |
@@ -160,7 +161,7 @@ And the last row is not something this service can fix. Every generation lives o
 
 ### Knowing rather than assuming
 
-Two of those rows are about finding out, and both are off unless asked for.
+Three of those rows are about finding out, and all three are off unless asked for.
 
 Every backup carries a `manifest.sha256` of everything in it, written once the backup is complete. Set `verifyEvery` to a number of hours and one backup **per application** is re-read each pass and compared against its own manifest. Which one rotates on its own: the least recently checked is always next. It costs reading a whole backup, which is why it is opt-in -- the hashing is not the expensive part, the disk is.
 
@@ -171,6 +172,36 @@ cd backup/prueba/latest && sha256sum -c manifest.sha256
 ```
 
 And `alertAfter`, a number of hours, with `alertCommand`, runs something when an application has gone that long without a successful backup -- one command per window, not one per pass, and a backup that succeeds resets it. A machine that has never backed up counts as overdue, which is deliberate: a deployment that never worked is the one you most want to hear about.
+
+### Watching the site
+
+A backup proves the machine answered `ssh`. Whether anybody can open the site is a different question with its own answer: a certificate expires, a proxy stops forwarding, a name falls out of its zone, and every backup keeps succeeding throughout. Give an application a `watch` and each pass asks the site the way a visitor would.
+
+```nix
+watch = {
+  url       = "https://example.org";
+  addresses = [ "203.0.113.10" ];
+  failures  = 2;
+};
+```
+
+What it finds is one of five things, and they are five because each one belongs to somebody different:
+
+| What it found | Whose it is |
+| --- | --- |
+| The name does not resolve | The registrar account: the name is out of its zone |
+| It resolves somewhere else | The DNS, or whatever was put in front of it |
+| The name does not answer, but the machine does | The edge: a proxy, a certificate, a firewall |
+| Neither answers | Whoever operates the machine |
+| It answered | Nobody, unless the status is 400 or worse |
+
+Telling the third from the fourth is the whole reason to watch from another machine, and it is why the machine is asked over plain HTTP: a certificate is issued to the name and never to the address, so asking the address over HTTPS fails however healthy the machine is, and would blame it for what the edge is doing. The limit that follows is worth knowing: a machine that serves only 443 is reported as not answering. Redirects are not followed either -- a 301 to the name is the machine answering, and following it would put the name back under test.
+
+`addresses` is what the name is expected to resolve to. Leave it out to accept any, which is what a site behind a proxy needs: it resolves to the proxy's network rather than to the machine, so naming the machine's address there would raise an alert on every single pass.
+
+`failures` is how many consecutive bad checks it takes, two by default, so the gap a deploy or a reboot leaves does not raise one. The alert goes through the same `alertCommand`, once when the count is reached rather than once per pass -- an alert that repeats every few minutes is one people learn to ignore. A good check clears the count.
+
+An application may have a `watch` and no `backupFrequency`, which watches a site without ever copying it. One that asks for neither is refused when the configuration is read, by name.
 
 Backups are incremental. rsync transfers only what changed since the last one, and hardlinks the rest against the two previous backups -- two, so that one interrupted generation does not force a full copy of the next -- and so each directory reads as a complete tree while costing only the difference. Three generations of a tree with one changed file take the space of one tree plus that file, not three trees.
 

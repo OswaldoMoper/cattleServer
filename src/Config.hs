@@ -86,7 +86,27 @@ data Config = Config
   , connectTimeout     :: Maybe Int
   -- ^ Seconds allowed for reaching the remote host, for both the session and
   -- the transfers.
+  , watch              :: Maybe Watch
+  -- ^ Whether this application's site is watched, and what is expected of it.
+  -- Absent never watches.
   } deriving (Generic, Show, Read)
+
+-- | What a site is expected to be doing, for the watch to compare against.
+data Watch = Watch
+  { url       :: String
+  -- ^ The address a visitor types, scheme included.
+  , addresses :: Maybe [String]
+  -- ^ The addresses the name may answer with. Absent accepts any, which is
+  -- what a site behind a proxy needs: it resolves to the proxy's network, not
+  -- to the machine, so demanding the machine's address would be wrong every
+  -- time -- and an alert that always fires is the worst kind.
+  , failures  :: Maybe Int
+  -- ^ Consecutive bad checks before alerting. A deploy or a reboot leaves a
+  -- short gap that is not a fault.
+  } deriving (Generic, Show, Read)
+
+instance FromJSON Watch
+instance ToJSON Watch
 
 instance FromJSON Config
 instance ToJSON Config
@@ -281,10 +301,22 @@ defaultStartupDelay = 30
 -- application it belongs to.
 serviceProblems :: Service -> [String]
 serviceProblems service =
-  [ "application " <> name (appConfig app) <> " asks for nothing: it has no backupFrequency"
+  [ "application " <> name (appConfig app)
+      <> " asks for nothing: it has neither backupFrequency nor watch"
   | app <- apps service
   , isNothing (backupFrequency (serviceConfig app))
+  , isNothing (watch (serviceConfig app))
   ]
+
+-- | Consecutive bad checks before a watch alerts.
+--
+-- Two, so that the gap a deploy or a reboot leaves does not raise one on its
+-- own. Clamped to one: zero would alert before anything had been checked.
+resolveWatchFailures :: Watch -> Int
+resolveWatchFailures = max 1 . fromMaybe defaultWatchFailures . failures
+
+defaultWatchFailures :: Int
+defaultWatchFailures = 2
 
 -- | Read the configuration, or say what is wrong with it.
 --
@@ -373,6 +405,7 @@ exampleService =
         , remoteRsyncPath    = Nothing
         , alertAfter         = Nothing
         , connectTimeout     = Just defaultConnectTimeout
+        , watch              = Nothing
         }
       app =
         App
