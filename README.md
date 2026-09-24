@@ -60,7 +60,7 @@ Getting this wrong does not look like a permissions error. The unit fails at ste
 
 ### Anywhere else
 
-`nix build` produces `result/bin/cattleServer`, wrapped so that `openssh`, `rsync` and `coreutils` are on its `PATH`. Locally the service runs `ssh-keygen`, `ssh-keyscan`, `rsync`, `ssh` -- rsync is told to use it as its transport -- and `rm`. The wrapper covers those four packages' worth. It does not provide a shell: if `alertCommand` is set, the `sh` that runs it comes from the ambient `PATH`, which under systemd is the default one.
+`nix build` produces `result/bin/cattleServer`, wrapped so that `openssh`, `rsync` and `coreutils` are on its `PATH`. Locally the service runs `ssh-keygen`, `ssh-keyscan`, `rsync`, `ssh` -- rsync is told to use it as its transport -- and `rm`. The wrapper covers those four packages' worth. It does not provide a shell: if `alertCommand` is set outside NixOS, the `sh` that runs it comes from the ambient `PATH`. The NixOS module puts `bash` on the unit's `PATH` for it, since a unit's `PATH` is only what its `path` names plus a handful of base packages, none of them a shell.
 
 On the machine being backed up the service needs `pg_dump`, `mkdir`, a shell, and **rsync**.
 

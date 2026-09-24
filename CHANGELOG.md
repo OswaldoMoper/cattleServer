@@ -13,6 +13,10 @@
   service no longer has to be started from one particular place.
 * Failing to write the placeholder configuration is no longer fatal, which is
   the normal case once the file is managed by Nix or agenix.
+* The unit has `bash` on its `PATH`, which is what the `sh` running
+  `alertCommand` comes from. A unit's `PATH` is its `path` plus a few base
+  packages, none of them a shell, so every alert the module's service raised
+  would have failed as a missing program.
 
 ### Trusting the remote host
 
