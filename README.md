@@ -205,6 +205,20 @@ Telling the third from the fourth is the whole reason to watch from another mach
 
 `failures` is how many consecutive bad checks it takes, two by default, so the gap a deploy or a reboot leaves does not raise one. The alert goes through the same `alertCommand`, once when the count is reached rather than once per pass -- an alert that repeats every few minutes is one people learn to ignore. A good check clears the count.
 
+The command gets the detail on its standard input and, so that a subject line can say what the body says, these variables:
+
+| Variable | Value |
+| --- | --- |
+| `CATTLE_APP` | the application's name |
+| `CATTLE_KIND` | `site` or `backup` |
+| `CATTLE_VERDICT` | a stable name for what was found: `name-does-not-resolve`, `resolves-elsewhere`, `name-does-not-answer`, `address-does-not-answer`, `certificate-expires-soon`, `status-<code>`, or `backup-overdue` |
+| `CATTLE_URL` | the watched URL; site alerts only |
+| `CATTLE_SUMMARY` | the one sentence the body leads with |
+
+```sh
+{ printf 'Subject: %s: %s\n\n' "$CATTLE_APP" "$CATTLE_VERDICT"; cat; } | msmtp ops@example.org
+```
+
 An application may have a `watch` and no `backupFrequency`, which watches a site without ever copying it. One that asks for neither is refused when the configuration is read, by name.
 
 Backups are incremental. rsync transfers only what changed since the last one, and hardlinks the rest against the two previous backups -- two, so that one interrupted generation does not force a full copy of the next -- and so each directory reads as a complete tree while costing only the difference. Three generations of a tree with one changed file take the space of one tree plus that file, not three trees.

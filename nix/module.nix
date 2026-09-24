@@ -323,8 +323,10 @@ let
         default = null;
         example = "mail -s 'cattleServer' someone@example.org";
         description = ''
-          Shell command run when an application passes its `alertAfter`, with
-          the detail on its standard input.
+          Shell command run when an application passes its `alertAfter`, or a
+          watched site fails its checks, with the detail on its standard input
+          and CATTLE_APP, CATTLE_KIND, CATTLE_VERDICT, CATTLE_URL and
+          CATTLE_SUMMARY in its environment, for a subject line.
 
           Logging is not warning: a service that has been failing for a month
           has been saying so all along, in a file nobody reads. One command

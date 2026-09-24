@@ -17,8 +17,8 @@ import           Manifest                     (manifestName, verifyManifest,
 import           Network.HTTP.Client          (Manager)
 import           Network.HTTP.Client.TLS      (newTlsManager)
 import           Network.SSH.Client.SimpleSSH as SSH
-import           Proc                         (runTool, runToolStreaming,
-                                               shellQuote)
+import           Proc                         (runAlert, runTool,
+                                               runToolStreaming, shellQuote)
 import           Progress                     (parseProgress,
                                                progressWorthReporting,
                                                renderFinished, renderRunning,
@@ -35,8 +35,8 @@ import           Time
 import           Transport                    (rsyncDiagnosis, rsyncSucceeded,
                                                sshArgs, sshCommand)
 import           Watch                        (checkSite, isTrouble,
-                                               verdictDescription, verdictTag,
-                                               withCertificate)
+                                               verdictDescription, verdictKey,
+                                               verdictTag, withCertificate)
 
 -- | Log directory used before any configuration has been read: the sibling
 -- directory the service has always fallen back to.
@@ -203,7 +203,11 @@ alertApps theApps logDirPath (Just command) = mapM_ one theApps
       let logFilePath = appLogPath logDirPath nameApp
           body = "cattleServer: " <> nameApp <> " has not been backed up for "
                    <> show age <> " hours, and the limit is " <> show hours <> ".\n"
-      (code, _, err) <- runTool "sh" ["-c", command] body
+      (code, _, err) <- runAlert command
+        [ ("CATTLE_APP", nameApp), ("CATTLE_KIND", "backup")
+        , ("CATTLE_VERDICT", "backup-overdue")
+        , ("CATTLE_SUMMARY", nameApp <> " has not been backed up for " <> show age <> " hours") ]
+        body
       case code of
         E.ExitSuccess -> do
           writeLog logFilePath "Alert"
@@ -251,7 +255,11 @@ watchApps manager theApps logDirPath command = mapM_ one theApps
           let body = "cattleServer: " <> nameApp <> " has failed its last "
                        <> show n <> " site checks.\n\n"
                        <> verdictDescription (url w) addr verdict <> "\n"
-          (code, _, err) <- runTool "sh" ["-c", cmd] body
+          (code, _, err) <- runAlert cmd
+            [ ("CATTLE_APP", nameApp), ("CATTLE_KIND", "site"), ("CATTLE_URL", url w)
+            , ("CATTLE_VERDICT", verdictKey verdict)
+            , ("CATTLE_SUMMARY", verdictDescription (url w) addr verdict) ]
+            body
           case code of
             E.ExitSuccess -> writeLog logFilePath "Alert"
               (nameApp <> " failed " <> show n <> " site checks; the alert command was run")

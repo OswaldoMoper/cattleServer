@@ -9,6 +9,7 @@
 module Watch
   ( Verdict (..)
   , verdictTag
+  , verdictKey
   , verdictDescription
   , isTrouble
   , checkSite
@@ -72,6 +73,20 @@ isTrouble :: Verdict -> Bool
 isTrouble (SiteIsUp code)           = code >= 400
 isTrouble (CertificateNotRead _ _)  = False
 isTrouble _                         = True
+
+-- | A stable name for what a verdict found, for a command that sorts or files
+-- alerts: the same string across releases, unlike the prose of the description.
+verdictKey :: Verdict -> String
+verdictKey verdict = case verdict of
+  NameDoesNotResolve _       -> "name-does-not-resolve"
+  ResolvesElsewhere _ _      -> "resolves-elsewhere"
+  NameDoesNotAnswer _        -> "name-does-not-answer"
+  AddressDoesNotAnswer _     -> "address-does-not-answer"
+  CertificateExpiresSoon _ _ -> "certificate-expires-soon"
+  CertificateNotRead _ _     -> "certificate-not-read"
+  SiteIsUp code
+    | code >= 400            -> "status-" <> show code
+    | otherwise              -> "up"
 
 verdictTag :: Verdict -> String
 verdictTag (SiteIsUp code) | code < 400 = "Site up"

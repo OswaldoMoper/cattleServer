@@ -133,6 +133,10 @@
   the gap a deploy or a reboot leaves does not raise one. The alert is sent
   once when the count is reached rather than once per pass, and a good check
   clears it.
+* `alertCommand` gets `CATTLE_APP`, `CATTLE_KIND`, `CATTLE_VERDICT`,
+  `CATTLE_URL` and `CATTLE_SUMMARY` in its environment, so a subject line can
+  name the site and what failed; the body stays on standard input.
+  `CATTLE_VERDICT` is a stable name, where the description is prose.
 * A site that answers on a certificate close to expiry is a bad check of its
   own, because it is the one failure that stays invisible until the day it is
   total: every request keeps succeeding while the renewal keeps failing.

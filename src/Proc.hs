@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Total wrappers around "System.Process".
-module Proc (runTool, runToolStreaming, shellQuote) where
+module Proc (runTool, runToolStreaming, runAlert, shellQuote) where
 
 import           Control.Concurrent      (forkIO)
 import           Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -98,3 +98,12 @@ shellQuote s = "'" <> concatMap escape s <> "'"
   where
     escape '\'' = "'\\''"
     escape c    = [c]
+
+-- | Run an alert command in @sh@, with the detail on its standard input and
+-- each pair exported to it as an environment variable, so a command can put
+-- the application and what failed in a subject line rather than only in the
+-- body.
+runAlert :: String -> [(String, String)] -> String -> IO (ExitCode, String, String)
+runAlert command vars body = runTool "sh" ["-c", exports <> command] body
+  where
+    exports = concat [ "export " <> k <> "=" <> shellQuote v <> "; " | (k, v) <- vars ]
