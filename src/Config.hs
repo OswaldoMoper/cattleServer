@@ -151,6 +151,10 @@ data Service = Service
   , alertCommand  :: Maybe String
   -- ^ Shell command run when an application has gone too long without a
   -- successful backup, with the detail on its standard input.
+  , controls      :: Maybe [String]
+  -- ^ URLs of sites that are not watched, asked before a watch pass. When
+  -- none of them answers, this machine cannot see out and the pass judges
+  -- nothing. Absent judges every pass.
   , apps          :: [App]
   }deriving (Generic, Show, Read)
 
@@ -386,6 +390,10 @@ defaultConnectTimeout = 30
 
 defaultProgressEvery :: Int
 defaultProgressEvery = 30
+
+-- | The controls a watch pass asks first; none means every pass is judged.
+resolveControls :: Service -> [String]
+resolveControls = fromMaybe [] . controls
 
 defaultCheckEvery :: Int
 defaultCheckEvery = 30

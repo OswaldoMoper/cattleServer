@@ -333,6 +333,20 @@ let
           per window, not per pass, and a backup that succeeds resets it.
         '';
       };
+      controls = mkOption {
+        type = types.nullOr (types.listOf types.str);
+        default = null;
+        example = [ "https://1.1.1.1" "https://www.google.com" ];
+        description = ''
+          URLs of sites that are not watched, asked before each watch pass.
+          When none of them answers, this machine cannot see out: the pass
+          logs "Cannot look", judges no site and leaves every count of bad
+          checks as it was. Null judges every pass.
+
+          For a watcher on a machine that loses its own network, such as a
+          laptop, where every site would otherwise fail at once.
+        '';
+      };
       apps = mkOption {
         type = types.listOf (types.submodule appOpts);
         default = [ ];

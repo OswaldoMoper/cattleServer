@@ -13,6 +13,7 @@ module Watch
   , verdictDescription
   , isTrouble
   , checkSite
+  , canSeeOut
   , withCertificate
   , daysLeft
   ) where
@@ -117,6 +118,23 @@ verdictDescription url addr verdict = case verdict of
   where
     list [] = "nothing"
     list xs = intercalate ", " xs
+
+-- | Whether this machine can see out at all: one control answering, with any
+-- status, is enough. With no controls it is taken to. Otherwise the Left says
+-- what each control did, for the log.
+--
+-- A watch from a machine that has lost its own network would blame every site
+-- at once, so this is asked before anything is judged.
+canSeeOut :: Manager -> [String] -> IO (Either String ())
+canSeeOut _ [] = return (Right ())
+canSeeOut manager urls = do
+  answers <- mapM (\u -> getStatus manager u id) urls
+  return $ case [ () | Right _ <- answers ] of
+    _ : _ -> Right ()
+    []    -> Left (intercalate "; " (zipWith said urls answers))
+  where
+    said u (Left err) = u <> ": " <> err
+    said u (Right c)  = u <> ": " <> show c
 
 -- | Ask the name, then ask the address, and say which of the two failed.
 --

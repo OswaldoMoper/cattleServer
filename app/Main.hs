@@ -34,7 +34,7 @@ import           System.IO                    (BufferMode (LineBuffering),
 import           Time
 import           Transport                    (rsyncDiagnosis, rsyncSucceeded,
                                                sshArgs, sshCommand)
-import           Watch                        (checkSite, isTrouble,
+import           Watch                        (canSeeOut, checkSite, isTrouble,
                                                verdictDescription, verdictKey,
                                                verdictTag, withCertificate)
 
@@ -129,7 +129,7 @@ recursiveBackup manager configPath waitMinutes = do
       recursiveDeleteAppBackup (apps software) (localHost software) logDirPath
       verifyApps (apps software) (localHost software) logDirPath (verifyEvery software)
       alertApps  (apps software) logDirPath (alertCommand software)
-      watchApps manager (apps software) logDirPath (alertCommand software)
+      watchApps manager (resolveControls software) (apps software) logDirPath (alertCommand software)
       recursiveBackup manager configPath (resolveCheckEvery software)
 
 -- | Bring every application's backups into the current layout.
@@ -224,9 +224,23 @@ alertApps theApps logDirPath (Just command) = mapM_ one theApps
 -- A site and the machine behind it fail separately, so the alert says which
 -- of the two it was: that is the whole point of watching from here rather
 -- than asking the machine whether it is alive.
-watchApps :: Manager -> [App] -> FilePath -> Maybe String -> IO ()
-watchApps manager theApps logDirPath command = mapM_ one theApps
+--
+-- A pass whose controls all fail judges nothing: it logs that it could not
+-- look, and leaves every count of bad checks as it was.
+watchApps :: Manager -> [String] -> [App] -> FilePath -> Maybe String -> IO ()
+watchApps manager controlUrls theApps logDirPath command =
+  case [ theApp | theApp <- theApps, Just _ <- [watch (serviceConfig theApp)] ] of
+    []      -> return ()
+    watched -> do
+      sight <- canSeeOut manager controlUrls
+      case sight of
+        Right () -> mapM_ one watched
+        Left why -> mapM_ (blind why) watched
   where
+    blind why theApp =
+      writeLog (appLogPath logDirPath (name (appConfig theApp))) "Cannot look"
+        ("no control answered, so no site was judged: " <> why)
+
     one theApp =
       case watch (serviceConfig theApp) of
         Nothing -> return ()

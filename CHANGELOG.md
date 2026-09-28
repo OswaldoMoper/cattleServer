@@ -148,6 +148,13 @@
   the Haskell side had already allowed: an application with a `watch` and no
   `backupFrequency` is watched and never copied. One that asks for neither is
   still refused when the configuration is read, by name.
+* `controls` lists sites that are not watched, asked before each watch pass.
+  When none of them answers, the machine doing the watching cannot see out,
+  so the pass logs `Cannot look`, judges no site and leaves every count of bad
+  checks as it was. Without it a watcher on a laptop that loses its network
+  blames every site at once. One control answering, with any status, is
+  enough; a certificate issued to an IP address is rejected by the TLS
+  validation here, so a control is named by its host name.
 
 ### Scheduling and output
 
