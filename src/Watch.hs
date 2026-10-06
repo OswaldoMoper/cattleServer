@@ -11,6 +11,7 @@ module Watch
   , verdictTag
   , verdictKey
   , verdictDescription
+  , verdictAdvice
   , isTrouble
   , checkSite
   , canSeeOut
@@ -118,6 +119,35 @@ verdictDescription url addr verdict = case verdict of
   where
     list [] = "nothing"
     list xs = intercalate ", " xs
+
+-- | What whoever receives the alert should do first, in one paragraph.
+verdictAdvice :: Verdict -> String
+verdictAdvice verdict = case verdict of
+  NameDoesNotResolve _ ->
+    "Ask whoever holds the registrar account whether the domain expired, is on hold,"
+      <> " or lost its name servers. Nothing on the machine fixes this."
+  ResolvesElsewhere _ _ ->
+    "Compare the name's DNS records, and any proxy put in front of it, with the"
+      <> " addresses this watch expects. If the change was intended, update the watch."
+  NameDoesNotAnswer _ ->
+    "The machine answers and the name does not: check the proxy in front of it,"
+      <> " the certificate, and the web server's virtual host for this name."
+  AddressDoesNotAnswer _ ->
+    "The machine does not answer at all: check from its provider's console that it"
+      <> " is running, then its network and its firewall."
+  CertificateExpiresSoon _ _ ->
+    "On the machine, read the journal of the certificate's renewal service, fix"
+      <> " what stops it, and renew by hand before the date."
+  CertificateNotRead _ _ ->
+    "Nothing to do now: visitors get through. Check the certificate when convenient."
+  SiteIsUp code
+    | code >= 500 ->
+        "The application fails: read its service's journal and the web server's"
+          <> " error log on the machine."
+    | code >= 400 ->
+        "The site refuses the request: check the web server's configuration for"
+          <> " this name, and whether the application moved the page."
+    | otherwise -> "Nothing to do: the site is up."
 
 -- | Whether this machine can see out at all: one control answering, with any
 -- status, is enough. With no controls it is taken to. Otherwise the Left says

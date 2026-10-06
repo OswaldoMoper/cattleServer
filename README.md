@@ -205,7 +205,7 @@ Telling the third from the fourth is the whole reason to watch from another mach
 
 `failures` is how many consecutive bad checks it takes, two by default, so the gap a deploy or a reboot leaves does not raise one. The alert goes through the same `alertCommand`, once when the count is reached rather than once per pass -- an alert that repeats every few minutes is one people learn to ignore. A good check clears the count.
 
-The command gets the detail on its standard input and, so that a subject line can say what the body says, these variables:
+The command gets the detail on its standard input -- the summary, then what happened, then what to do first -- and, so that a subject line can say what the body says, these variables:
 
 | Variable | Value |
 | --- | --- |
