@@ -138,7 +138,7 @@ The uploads directory keeps the name it has on the remote, so an
 
 The directory name is the date, and `latest` is a path that does not change between backups, so `readlink backup/prueba/latest` answers both "where is the current backup" and "when was it taken". The link is only moved once a backup has finished, so it never points at a half written one.
 
-`deleteFrequency` removes every backup older than it, oldest first. On its own that is a hazard rather than a policy: it runs whether or not the backup before it succeeded, so a week of failing backups would see the last good one deleted on schedule and leave nothing at all. `keepAtLeast`, 2 by default, is the floor that stops it. Set it to zero to go back to deleting purely by the calendar.
+`deleteFrequency` removes every backup older than it, oldest first. On its own that is a hazard rather than a policy: it runs whether or not the backup before it succeeded, so a week of failing backups would see the last good one deleted on schedule and leave nothing at all. `keepAtLeast`, 2 by default, is the floor that stops it. Only a backup with a manifest counts towards it: a directory a failed backup left behind is not one, so it fills no place in the floor and is deleted like any other once it is past `deleteFrequency`. Set it to zero to go back to deleting purely by the calendar.
 
 ## What each defence actually covers
 

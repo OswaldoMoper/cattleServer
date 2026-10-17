@@ -24,7 +24,8 @@ import           Progress                     (parseProgress,
                                                renderFinished, renderRunning,
                                                statsWorthKeeping, throttled)
 import           Restore                      (runRestore)
-import           System.Directory            (getModificationTime, removeFile,
+import           System.Directory            (doesFileExist,
+                                               getModificationTime, removeFile,
                                                setModificationTime)
 import           System.Exit                  as E
 import           System.IO                    (BufferMode (LineBuffering),
@@ -421,6 +422,10 @@ recursiveSaveAppBackup (app:rest) knownHost localHost logDirPath policy progress
 -- | Delete the backups that are older than 'deleteFrequency', oldest first,
 -- while leaving at least 'keepAtLeast' of them.
 --
+-- Only a backup with a manifest counts towards 'keepAtLeast': one without was
+-- never recorded, so it cannot stand in for a good one. It is still deleted
+-- once it is older than the cutoff, whatever the floor says.
+--
 -- The layout this replaced could only name the one directory that fell exactly
 -- on the cutoff, so a day the service happened to be down was never revisited
 -- and its backups stayed forever. Sorting and taking a prefix reaches all of
@@ -436,10 +441,14 @@ deleteAppBackup app localHost logDirPath = do
       cutoff      = subsNominalTime (times deleteF) (unit deleteF) current
       floor'      = resolveKeepAtLeast (serviceConfig app)
   existing <- listBackups appRoot
-  let expired  = takeWhile ((< cutoff) . fst) existing
-      spare    = length existing - floor'
-      doomed   = take (max 0 spare) expired
-      withheld = length expired - length doomed
+  recorded <- mapM (\(_, dir) -> doesFileExist (dir <> "/" <> manifestName)) existing
+  let complete    = [ b | (b, True)  <- zip existing recorded ]
+      incomplete  = [ b | (b, False) <- zip existing recorded ]
+      expired     = takeWhile ((< cutoff) . fst) complete
+      spare       = length complete - floor'
+      doomedGood  = take (max 0 spare) expired
+      doomed      = sortOn fst (takeWhile ((< cutoff) . fst) incomplete <> doomedGood)
+      withheld    = length expired - length doomedGood
   mapM_ (removeBackup logFilePath (serviceLogPath logDirPath) nameApp) doomed
   case withheld > 0 of
     True  -> writeLog logFilePath "Skipped"

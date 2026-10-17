@@ -11,6 +11,15 @@
   still answers only for the backup. A machine whose backups are all taken
   with `--once` no longer keeps every one of them forever.
 
+### Keeping backups
+
+* Only a backup with a manifest counts towards `keepAtLeast`. A directory a
+  failed backup left behind -- a dump that never arrived, uploads cut halfway
+  -- used to fill a place in the floor while being no backup at all, so the
+  floor could keep fewer good ones than it promised. Such a directory is now
+  deleted once it is past `deleteFrequency`, whatever the floor says, and so
+  is a backup taken before manifests existed.
+
 ## 0.11.0
 
 ### Installing and configuring
