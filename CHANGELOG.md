@@ -1,5 +1,16 @@
 # Revision history for cattleServer
 
+## 0.12.0
+
+### Scheduling and output
+
+* `--once <application>` also applies that application's deletion rule and,
+  when `verifyEvery` says one is due, verifies its least recently checked
+  backup -- what a pass of the daemon does after copying. It does both whether
+  or not the backup was recorded, and neither changes the exit code, which
+  still answers only for the backup. A machine whose backups are all taken
+  with `--once` no longer keeps every one of them forever.
+
 ## 0.11.0
 
 ### Installing and configuring

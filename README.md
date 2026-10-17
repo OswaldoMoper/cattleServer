@@ -116,6 +116,8 @@ The exit code is the answer, and the three cases are deliberately distinct:
 
 The run writes to the same log as any other backup, so it also moves that application's window -- the daemon will not immediately repeat what was just copied.
 
+Then it does what a pass does after copying, for that application only: it deletes the backups `deleteFrequency` has expired, keeping `keepAtLeast`, and, if `verifyEvery` is set and one is due, checks the least recently checked backup against its manifest. Both happen whether or not the backup was recorded, and neither touches the exit code; what they did is in the log. So a machine that only ever backs up with `--once` still has its old backups pruned.
+
 ## What a backup looks like, and what survives
 
 Backups land in a dated tree under `<localHost.userHome>/backup/<app>/`:

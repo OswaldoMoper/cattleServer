@@ -82,6 +82,12 @@ main = do
 --
 -- The backup is recorded in the same log as any other, which also moves the
 -- application's window: a copy is a copy, whoever asked for it.
+--
+-- Afterwards, whether or not the backup was recorded, the application's
+-- deletion rule is applied and one of its backups is verified when
+-- 'verifyEvery' says one is due, as a pass of the daemon would. Neither
+-- changes the exit code, which is the backup's alone; what they did goes to
+-- the log.
 runOnce :: String -> Either String Service -> IO E.ExitCode
 runOnce _ (Left err) = do
   hPutStrLn stderr ("cattleServer: " <> err)
@@ -100,6 +106,8 @@ runOnce appName (Right service) =
       current <- getCurrentTime
       outcome <- saveBackup current app (knownHosts service) (localHost service)
                    logDirPath (resolveHostKeyPolicy service) (resolveProgressEvery service)
+      deleteAppBackup app (localHost service) logDirPath
+      verifyApps [app] (localHost service) logDirPath (verifyEvery service)
       case outcome of
         BackupRecorded dir -> do
           putStrLn (appName <> " backed up into " <> dir)
